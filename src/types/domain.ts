@@ -78,6 +78,8 @@ export interface AvailabilityResult {
   timezone: 'Asia/Kathmandu';
   busy: Array<{ startsAt: string; endsAt: string }>;
   closureReason?: string;
+  openingHours?: { openTime: string; closeTime: string; bookable: boolean };
+  closures?: Array<{ startsAt: string; endsAt: string; reason: string }>;
 }
 
 export interface BookingRequest extends IdentityInput {

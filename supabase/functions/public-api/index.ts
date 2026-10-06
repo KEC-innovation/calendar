@@ -199,18 +199,40 @@ Deno.serve((request) => handle(request, async () => {
       .maybeSingle();
     if (machineError) throw machineError;
     if (!machine) throw new HttpError(404, 'Equipment is not available.', 'NOT_FOUND');
-    const [{ data: busyRows, error: busyError }, { data: closures, error: closureError }] = await Promise.all([
-      admin.rpc('get_public_availability', { p_equipment_id: equipmentId, p_local_date: date }),
-      admin.from('closures').select('reason').eq('closure_date', date).eq('active', true).is('starts_at', null).limit(1),
+    const calendarDate = new Date(`${date}T12:00:00Z`);
+    if (!Number.isFinite(calendarDate.getTime()) || calendarDate.toISOString().slice(0, 10) !== date) {
+      throw new HttpError(400, 'Date is invalid.', 'VALIDATION_ERROR');
+    }
+    const isoDay = calendarDate.getUTCDay() || 7;
+    const dayStart = new Date(`${date}T00:00:00+05:45`).toISOString();
+    const dayEnd = new Date(new Date(dayStart).getTime() + 86_400_000).toISOString();
+    const [
+      { data: busyRows, error: busyError },
+      { data: closures, error: closureError },
+      { data: hours, error: hoursError },
+    ] = await Promise.all([
+      // Return only occupied times, including reservations crossing the day boundary.
+      admin.from('bookings').select('starts_at,ends_at').eq('equipment_id', equipmentId)
+        .in('status', ['confirmed', 'checked_in']).lt('starts_at', dayEnd).gt('ends_at', dayStart)
+        .order('starts_at'),
+      admin.from('closures').select('starts_at,ends_at,reason').eq('closure_date', date).eq('active', true),
+      admin.from('weekly_hours').select('open_time,close_time,bookable').eq('iso_day', isoDay).maybeSingle(),
     ]);
     if (busyError) throw busyError;
     if (closureError) throw closureError;
+    if (hoursError) throw hoursError;
     return json(request, {
       equipmentId,
       date,
       timezone: 'Asia/Kathmandu',
-      busy: (busyRows || []).map((row: {starts_at: string; ends_at: string}) => ({ startsAt: row.starts_at, endsAt: row.ends_at })),
-      closureReason: closures?.[0]?.reason || undefined,
+      busy: (busyRows || []).map((row) => ({ startsAt: row.starts_at, endsAt: row.ends_at })),
+      closureReason: closures?.find((row) => row.starts_at === null)?.reason || undefined,
+      openingHours: hours ? { openTime: hours.open_time, closeTime: hours.close_time, bookable: hours.bookable } : undefined,
+      closures: (closures || []).filter((row) => row.starts_at !== null && row.ends_at !== null).map((row) => ({
+        startsAt: new Date(`${date}T${row.starts_at}+05:45`).toISOString(),
+        endsAt: new Date(`${date}T${row.ends_at}+05:45`).toISOString(),
+        reason: row.reason,
+      })),
     });
   }
 
