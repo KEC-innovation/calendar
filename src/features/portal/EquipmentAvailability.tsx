@@ -1,9 +1,11 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { api } from '../../lib/api';
 import { buildDayTimeline, calendarWeek, nepalInputValue, selectedRangeIssue, shiftDate } from '../../lib/availabilityTimeline';
+import type { AvailabilityCache } from '../../lib/availabilityCache';
 import type { AvailabilityResult } from '../../types/domain';
 
 interface Props {
+  cache: AvailabilityCache;
   equipmentId: string;
   equipmentName: string;
   date: string;
@@ -14,23 +16,36 @@ interface Props {
   onDateChange: (date: string) => void;
   onChoose: (start: string, end: string) => void;
 }
-const clock = (value: string) => new Intl.DateTimeFormat('en-NP', { timeZone: 'Asia/Kathmandu', hour: 'numeric', minute: '2-digit' }).format(new Date(value));
-const dayLabel = (date: string, options: Intl.DateTimeFormatOptions) => new Intl.DateTimeFormat('en-NP', { timeZone: 'UTC', ...options }).format(new Date(`${date}T12:00:00Z`));
+const clockFormatter = new Intl.DateTimeFormat('en-NP', { timeZone: 'Asia/Kathmandu', hour: 'numeric', minute: '2-digit' });
+const clock = (value: string) => clockFormatter.format(new Date(value));
+const dateFormatters = new Map<string, Intl.DateTimeFormat>();
+const dayLabel = (date: string, options: Intl.DateTimeFormatOptions) => {
+  const key = JSON.stringify(options);
+  let formatter = dateFormatters.get(key);
+  if (!formatter) { formatter = new Intl.DateTimeFormat('en-NP', { timeZone: 'UTC', ...options }); dateFormatters.set(key, formatter); }
+  return formatter.format(new Date(`${date}T12:00:00Z`));
+};
 
-export function EquipmentAvailability({ equipmentId, equipmentName, date, start, end, maxMinutes, revision, onDateChange, onChoose }: Props) {
+export function EquipmentAvailability({ cache, equipmentId, equipmentName, date, start, end, maxMinutes, revision, onDateChange, onChoose }: Props) {
   const [result, setResult] = useState<AvailabilityResult | null>(null);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(true);
   const [refresh, setRefresh] = useState(0);
   const [checkedAt, setCheckedAt] = useState<Date | null>(null);
+  const lastRefresh = useRef(refresh);
   useEffect(() => {
     let live = true;
-    setLoading(true); setError('');
+    const force = lastRefresh.current !== refresh;
+    lastRefresh.current = refresh;
+    const cached = force ? null : cache.get(equipmentId, date, revision);
+    setError('');
+    if (cached) { setResult(cached.data); setCheckedAt(cached.checkedAt); setLoading(false); return; }
+    setLoading(true);
     void api.availability(equipmentId, date).then(data => {
-      if (live) { setResult(data); setCheckedAt(new Date()); setLoading(false); }
-    }).catch(cause => { if (live) { setError(cause instanceof Error ? cause.message : 'Availability could not be loaded.'); setLoading(false); } });
+      if (live) { const checked = new Date(); cache.set(data, revision, checked); setResult(data); setCheckedAt(checked); setLoading(false); }
+    }).catch(cause => { if (live) { cache.forget(equipmentId, date); setError(cause instanceof Error ? cause.message : 'Availability could not be loaded.'); setLoading(false); } });
     return () => { live = false; };
-  }, [equipmentId, date, revision, refresh]);
+  }, [cache, equipmentId, date, revision, refresh]);
   useEffect(() => {
     const interval = window.setInterval(() => { if (document.visibilityState === 'visible') setRefresh(value => value + 1); }, 60_000);
     const visible = () => { if (document.visibilityState === 'visible') setRefresh(value => value + 1); };
@@ -39,8 +54,8 @@ export function EquipmentAvailability({ equipmentId, equipmentName, date, start,
   }, []);
   const data = result?.equipmentId === equipmentId && result.date === date && !error ? result : null;
   const today = nepalInputValue(new Date()).slice(0, 10);
-  const days = calendarWeek(date);
-  const timeline = data ? buildDayTimeline(data) : [];
+  const days = useMemo(() => calendarWeek(date), [date]);
+  const timeline = useMemo(() => data ? buildDayTimeline(data) : [], [data, refresh]);
   const issue = data?.openingHours ? selectedRangeIssue(data, start, end, maxMinutes) : null;
   const hours = data?.openingHours;
   return <section className="equipment-availability" aria-label={`${equipmentName} availability`} aria-busy={loading}>

@@ -7,7 +7,7 @@ const secondMachineId='00000000-0000-4000-8000-000000000005';
 const quizId='00000000-0000-4000-8000-000000000004';
 const user={id:userId,email:'student@example.invalid',aud:'authenticated',role:'authenticated',email_confirmed_at:'2026-01-01T00:00:00Z',app_metadata:{provider:'email'},user_metadata:{},created_at:'2026-01-01T00:00:00Z'};
 const jwt=[{alg:'HS256',typ:'JWT'},{sub:userId,role:'authenticated',exp:2200000000},'synthetic-signature'].map(v=>Buffer.from(typeof v==='string'?v:JSON.stringify(v)).toString('base64url')).join('.');
-async function fixture(page:Page,role:'student'|'trainer'='student', options: {availabilityError?:boolean;delayedEquipment?:boolean} = {}){
+async function fixture(page:Page,role:'student'|'trainer'='student', options: {availabilityError?:boolean;delayedEquipment?:boolean;availabilityDelayMs?:number} = {}){
  const requests:Array<Record<string,unknown>>=[];
  let booked=false;
  await page.route('https://kec-test.supabase.co/**',async route=>{
@@ -16,7 +16,7 @@ async function fixture(page:Page,role:'student'|'trainer'='student', options: {a
   let data:unknown={};
   if(url.pathname.endsWith('/token'))data={access_token:jwt,refresh_token:'synthetic-refresh',expires_in:36000,token_type:'bearer',user};
   else if(url.pathname.endsWith('/user'))data={user,...user};
-  else if(url.pathname.includes('/rest/v1/staff_roles'))data=role==='trainer'?{role:'trainer',display_name:'Training Staff',active:true,capabilities:['training']}:null;
+  else if(url.pathname.includes('/rest/v1/staff_roles')){requests.push({action:'staff-role.read'});data=role==='trainer'?{role:'trainer',display_name:'Training Staff',active:true,capabilities:['training']}:null;}
   else if(url.pathname.endsWith('/portal-api')){
    requests.push(body);
    if(body.action==='account.status')data={passwordChangeRequired:false};
@@ -30,6 +30,7 @@ async function fixture(page:Page,role:'student'|'trainer'='student', options: {a
    if(body.action==='catalog')data={materials:[],plans:[],equipment:[]};
   }else if(url.pathname.endsWith('/public-api')){
    requests.push(body);
+   if(options.availabilityDelayMs)await new Promise(resolve=>setTimeout(resolve,options.availabilityDelayMs));
    if(options.availabilityError){await route.fulfill({status:503,contentType:'application/json',headers:{'Access-Control-Allow-Origin':'*'},body:JSON.stringify({error:'Availability temporarily unavailable.'})});return;}
    if(options.delayedEquipment && body.equipmentId===machineId)await new Promise(resolve=>setTimeout(resolve,250));
    data={equipmentId:body.equipmentId,date:body.date,timezone:'Asia/Kathmandu',openingHours:{openTime:'09:00:00',closeTime:'19:00:00',bookable:true},closures:[],busy:body.equipmentId===machineId?[...(booked?[{startsAt:`${String(body.date)}T10:00:00+05:45`,endsAt:`${String(body.date)}T11:00:00+05:45`}]:[]),{startsAt:`${String(body.date)}T11:00:00+05:45`,endsAt:`${String(body.date)}T12:00:00+05:45`}]:[]};
@@ -115,4 +116,37 @@ test('failed availability lookup does not display invented free slots',async({pa
  await expect(view.getByRole('alert')).toContainText('Availability temporarily unavailable.');
  await expect(view.getByRole('button',{name:/, Free$/})).toHaveCount(0);
  await expect(view.getByRole('button',{name:'Refresh availability'})).toBeEnabled();
+});
+
+
+test('recent machine availability is reused and manual refresh reaches the server',async({page})=>{
+ const requests=await fixture(page,'student',{availabilityDelayMs:350});await login(page);
+ await page.getByLabel('Starts (Nepal)').fill('2030-01-07T10:00');await page.getByLabel('Ends (Nepal)').fill('2030-01-07T11:00');
+ await page.getByLabel('Certified equipment').selectOption(machineId);
+ await expect(page.getByRole('region',{name:'Test Printer availability'}).getByRole('button',{name:'9:00 AM to 9:30 AM, Free',exact:true})).toBeEnabled();
+ const firstCount=requests.filter(r=>r.action==='availability'&&r.equipmentId===machineId).length;
+ await page.getByLabel('Certified equipment').selectOption(secondMachineId);
+ await expect(page.getByRole('region',{name:'Second Printer availability'}).getByRole('button',{name:'11:00 AM to 11:30 AM, Free',exact:true})).toBeEnabled();
+ const start=Date.now();await page.getByLabel('Certified equipment').selectOption(machineId);
+ const view=page.getByRole('region',{name:'Test Printer availability'});
+ await expect(view.getByRole('button',{name:'9:00 AM to 9:30 AM, Free',exact:true})).toBeEnabled();
+ console.log(`Availability revisit with simulated 350ms API delay: ${Date.now()-start}ms`);
+ expect(requests.filter(r=>r.action==='availability'&&r.equipmentId===machineId)).toHaveLength(firstCount);
+ await view.getByRole('button',{name:'Refresh availability'}).click();
+ await expect.poll(()=>requests.filter(r=>r.action==='availability'&&r.equipmentId===machineId).length).toBeGreaterThan(firstCount);
+ await expect(view.getByRole('button',{name:'9:00 AM to 9:30 AM, Free',exact:true})).toBeEnabled();
+});
+test('student page reload skips staff-role lookup and staff entry still checks it',async({page})=>{
+ const requests=await fixture(page);await login(page);await expect(page.getByRole('heading',{name:'Hello, Test Student.'})).toBeVisible();
+ requests.length=0;await page.reload();await expect(page.getByRole('heading',{name:'Hello, Test Student.'})).toBeVisible();
+ expect(requests.filter(r=>r.action==='staff-role.read')).toHaveLength(0);
+ await page.getByRole('link',{name:'Staff',exact:true}).click();
+ await expect(page.getByRole('heading',{name:'Staff sign in',exact:true})).toBeVisible();
+ expect(requests.some(r=>r.action==='staff-role.read')).toBe(true);
+});
+test('a stored trainer session restores when entering the staff screen',async({page})=>{
+ const requests=await fixture(page,'trainer');await login(page,'/#/staff/login');
+ await expect(page.getByRole('heading',{name:'Daily operations'})).toBeVisible();
+ requests.length=0;await page.reload();await expect(page.getByRole('heading',{name:'Daily operations'})).toBeVisible();
+ expect(requests.some(r=>r.action==='staff-role.read')).toBe(true);
 });

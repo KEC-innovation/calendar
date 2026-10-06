@@ -190,15 +190,6 @@ Deno.serve((request) => handle(request, async () => {
     const equipmentId = requireUuid(body.equipmentId, 'Equipment');
     const date = requiredText(body.date, 'Date', 10);
     if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) throw new HttpError(400, 'Date is invalid.', 'VALIDATION_ERROR');
-    const { data: machine, error: machineError } = await admin
-      .from('equipment')
-      .select('id')
-      .eq('id', equipmentId)
-      .eq('booking_enabled', true)
-      .eq('status', 'active')
-      .maybeSingle();
-    if (machineError) throw machineError;
-    if (!machine) throw new HttpError(404, 'Equipment is not available.', 'NOT_FOUND');
     const calendarDate = new Date(`${date}T12:00:00Z`);
     if (!Number.isFinite(calendarDate.getTime()) || calendarDate.toISOString().slice(0, 10) !== date) {
       throw new HttpError(400, 'Date is invalid.', 'VALIDATION_ERROR');
@@ -207,10 +198,12 @@ Deno.serve((request) => handle(request, async () => {
     const dayStart = new Date(`${date}T00:00:00+05:45`).toISOString();
     const dayEnd = new Date(new Date(dayStart).getTime() + 86_400_000).toISOString();
     const [
+      { data: machine, error: machineError },
       { data: busyRows, error: busyError },
       { data: closures, error: closureError },
       { data: hours, error: hoursError },
     ] = await Promise.all([
+      admin.from('equipment').select('id').eq('id', equipmentId).eq('booking_enabled', true).eq('status', 'active').maybeSingle(),
       // Return only occupied times, including reservations crossing the day boundary.
       admin.from('bookings').select('starts_at,ends_at').eq('equipment_id', equipmentId)
         .in('status', ['confirmed', 'checked_in']).lt('starts_at', dayEnd).gt('ends_at', dayStart)
@@ -218,6 +211,8 @@ Deno.serve((request) => handle(request, async () => {
       admin.from('closures').select('starts_at,ends_at,reason').eq('closure_date', date).eq('active', true),
       admin.from('weekly_hours').select('open_time,close_time,bookable').eq('iso_day', isoDay).maybeSingle(),
     ]);
+    if (machineError) throw machineError;
+    if (!machine) throw new HttpError(404, 'Equipment is not available.', 'NOT_FOUND');
     if (busyError) throw busyError;
     if (closureError) throw closureError;
     if (hoursError) throw hoursError;
