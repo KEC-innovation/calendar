@@ -1,0 +1,39 @@
+import { expect, test } from '@playwright/test';
+import type { Page } from '@playwright/test';
+
+async function enterDemo(page: Page) {
+  await page.goto('/#/staff/login');
+  await page.getByRole('button', { name: 'Enter demo owner workspace' }).click();
+  await expect(page.getByRole('heading', { name: /Good day/ })).toBeVisible();
+}
+
+test('owner can reach every admin workspace', async ({ page }) => {
+  await enterDemo(page);
+  const sections = [
+    ['Equipment', 'Equipment'], ['People', 'People & access'], ['Certifications', 'Certifications'],
+    ['Bookings', 'Bookings'], ['Training', 'Training & quizzes'], ['Hours & closures', 'Hours & closures'],
+    ['Staff access', 'Staff access'], ['Audit trail', 'Audit trail'],
+  ] as const;
+  for (const [link, heading] of sections) {
+    await page.getByRole('link', { name: link, exact: true }).click();
+    await expect(page.getByRole('heading', { name: heading, exact: true })).toBeVisible();
+  }
+});
+
+test('equipment and person edits use the role-gated admin surface', async ({ page }) => {
+  await enterDemo(page);
+  await page.getByRole('link', { name: 'Equipment', exact: true }).click();
+  await page.getByRole('button', { name: 'Add equipment' }).click();
+  await page.getByLabel('Name').fill('Demo Workstation');
+  await page.getByLabel('Slug').fill('demo-workstation');
+  await page.getByRole('button', { name: 'Save equipment' }).click();
+  await expect(page.getByText('Demo Workstation was saved.')).toBeVisible();
+  await page.getByRole('link', { name: 'People', exact: true }).click();
+  await page.getByRole('button', { name: 'Add person' }).click();
+  await page.getByLabel('Full name').fill('Demo Participant');
+  await page.getByLabel('Email').fill('participant@example.invalid');
+  await page.getByLabel('Roll number').fill('KEC-DEMO-2');
+  await page.getByLabel('Phone').fill('9800000000');
+  await page.getByRole('button', { name: 'Save person' }).click();
+  await expect(page.getByText('Demo Participant was saved.')).toBeVisible();
+});

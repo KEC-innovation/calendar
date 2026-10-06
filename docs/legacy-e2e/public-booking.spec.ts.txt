@@ -1,0 +1,47 @@
+import { expect, test } from '@playwright/test';
+
+test('verified student books and cancels an eligible resource', async ({ page }) => {
+  await page.goto('/');
+  await page.getByLabel('Full name').fill('Aarav Shrestha');
+  await page.getByLabel('Email').fill('student@kec.edu.np');
+  await page.getByLabel('Roll number').fill('KEC-001');
+  await page.getByLabel('Phone number').fill('+9779800000000');
+  await page.getByRole('button', { name: 'Check my access' }).click();
+  await expect(page.getByRole('heading', { name: 'Choose equipment' })).toBeVisible();
+  await expect(page.getByText('Table 1')).toHaveCount(0);
+  await page.getByRole('radio', { name: /Bambu Lab A1 #1/ }).check();
+  await page.getByRole('button', { name: 'Continue to time' }).click();
+  await page.getByRole('button', { name: 'Check availability' }).click();
+  await expect(page.getByText(/This time is available/)).toBeVisible();
+  await page.getByRole('button', { name: 'Confirm booking' }).click();
+  await expect(page.getByText('Booking confirmed')).toBeVisible();
+  await expect(page.getByTestId('booking-reference')).toContainText('KEC-DEMO-');
+  await page.getByRole('link', { name: 'Manage booking' }).click();
+  await page.getByRole('button', { name: 'Cancel this booking' }).click();
+  await expect(page.getByRole('heading', { name: 'Booking cancelled' })).toBeVisible();
+});
+
+test('a KEC email and roll number must match the same record', async ({ page }) => {
+  await page.goto('/');
+  await page.getByLabel('Full name').fill('Aarav Shrestha');
+  await page.getByLabel('Email').fill('student@kec.edu.np');
+  await page.getByLabel('Roll number').fill('WRONG-ROLL');
+  await page.getByLabel('Phone number').fill('+9779800000000');
+  await page.getByRole('button', { name: 'Check my access' }).click();
+  await expect(page.getByRole('alert')).toContainText('do not match');
+});
+
+test('client blocks a booking longer than six hours', async ({ page }) => {
+  await page.goto('/');
+  await page.getByLabel('Full name').fill('Aarav Shrestha');
+  await page.getByLabel('Email').fill('student@kec.edu.np');
+  await page.getByLabel('Roll number').fill('KEC-001');
+  await page.getByLabel('Phone number').fill('+9779800000000');
+  await page.getByRole('button', { name: 'Check my access' }).click();
+  await page.getByRole('radio', { name: /Bambu Lab A1 #1/ }).check();
+  await page.getByRole('button', { name: 'Continue to time' }).click();
+  await page.getByLabel('Start').fill('09:00');
+  await page.getByLabel('End').fill('17:00');
+  await page.getByRole('button', { name: 'Check availability' }).click();
+  await expect(page.getByRole('alert')).toContainText('6 hours');
+});

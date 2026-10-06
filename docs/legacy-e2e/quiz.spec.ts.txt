@@ -1,0 +1,25 @@
+import { expect, test } from '@playwright/test';
+
+test('trainer-started quiz freezes and disappears after final submission', async ({ page }) => {
+  await page.goto('/#/staff/login');
+  await page.getByRole('button', { name: 'Enter demo owner workspace' }).click();
+  await page.getByRole('link', { name: 'Training', exact: true }).click();
+  await page.getByRole('button', { name: 'Start supervised quiz' }).click();
+  await page.getByLabel('Quiz').selectOption('quiz-3d');
+  await page.getByLabel('Full name').fill('Quiz Participant');
+  await page.getByLabel('Email').fill('quiz@example.invalid');
+  await page.getByLabel('Roll number').fill('KEC-DEMO-QUIZ');
+  await page.getByLabel('Phone').fill('9800000000');
+  await page.getByText('Safety orientation completed').click();
+  await page.getByText('Liability waiver confirmed').click();
+  await page.getByText(/Adult status verified/).click();
+  await page.getByRole('button', { name: 'Start 8-minute quiz' }).click();
+  await expect(page.getByText('8:00')).toBeVisible();
+  const questions = page.locator('.question-card');
+  await expect(questions).toHaveCount(20);
+  for (const question of await questions.all()) await question.locator('input[type="radio"]').first().check();
+  await page.getByRole('button', { name: 'Submit final answers' }).click();
+  await expect(page.getByRole('heading', { name: 'Certification granted' })).toBeVisible();
+  await expect(page.locator('.question-card')).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'Submit final answers' })).toHaveCount(0);
+});

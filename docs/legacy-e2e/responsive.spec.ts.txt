@@ -1,0 +1,10 @@
+import { expect, test } from '@playwright/test';
+
+test('primary surfaces do not introduce horizontal page overflow', async ({ page }) => {
+  for (const route of ['/', '/#/staff/login']) {
+    await page.goto(route);
+    await expect(page.locator('body')).toBeVisible();
+    const overflow = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
+    expect(overflow).toBeLessThanOrEqual(1);
+  }
+});

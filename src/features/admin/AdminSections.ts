@@ -1,0 +1,9 @@
+export { DashboardPanel } from './sections/DashboardPanel';
+export { EquipmentPanel } from './sections/EquipmentPanel';
+export { PeoplePanel } from './sections/PeoplePanel';
+export { CertificationsPanel } from './sections/CertificationsPanel';
+export { BookingsPanel } from './sections/BookingsPanel';
+export { TrainingPanel } from './sections/TrainingPanel';
+export { SchedulePanel } from './sections/SchedulePanel';
+export { StaffPanel } from './sections/StaffPanel';
+export { AuditPanel } from './sections/AuditPanel';
