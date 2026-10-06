@@ -77,6 +77,96 @@ await check('trainer cannot create a subscription',()=>rejects('select add_clien
 await check('new password clears initial-password restriction',async()=>{await db.query('insert into account_security(user_id,password_change_required)values($1,true)',[student]);await db.query("update auth.users set encrypted_password='synthetic hash' where id=$1",[student]);assert.equal((await db.query('select password_change_required from account_security')).rows[0].password_change_required,false);});
 await check('access officer can record compliance evidence atomically',async()=>{await db.query('select verify_person_records($1,$2,$3,$4,$5,$6)',[access,person,'verified','verified','adult','Verified existing signed waiver and induction attendance']);assert.equal((await db.query("select count(*)::int n from audit_log where action='compliance_evidence_recorded'")).rows[0].n,1);});
 await check('trainer cannot verify access prerequisites',()=>rejects('select verify_person_records($1,$2,$3,$4,$5,$6)',[trainer,person,'verified','verified','adult','Synthetic evidence review'],/Access permission/));
+// Owner access and equipment training policy controls.
+const adminUser=uid(7),secondOwner=uid(8);
+const otherType=(await db.query('select id from certification_types where id<>$1 and active limit 1',[type])).rows[0].id;
+async function staffChange(actor,target,mode,role=null,active=null,caps=null,types=null,reason='Documented staff responsibility and eligibility review') {
+ return db.query('select update_staff_access($1,$2,$3,$4,$5,$6,$7,$8)',[actor,target,mode,role,active,caps,types,reason]);
+}
+await check('Admin retains full operational access',async()=>{
+ await db.query('insert into auth.users(id,email,email_confirmed_at)values($1,$2,now())',[adminUser,'admin@example.invalid']);
+ await db.query("insert into staff_roles(user_id,display_name,role)values($1,'Admin','admin')",[adminUser]);
+ const row=(await db.query("select private.staff_can($1,'training') t,private.staff_can($1,'access') a,private.staff_can($1,'subscriptions') s,private.staff_can($1,'catalog') c,private.staff_can_train($1,$2) e",[adminUser,type])).rows[0];
+ assert.deepEqual(row,{t:true,a:true,s:true,c:true,e:true});
+ await rejects('select update_staff_access($1,$2,$3,$4,$5,$6,$7,$8)',[adminUser,trainer,'role','owner',true,null,null,'Attempted role promotion by operational Admin'],/Owner permission/);
+});
+await check('existing training authority and imported data are preserved',async()=>{
+ assert.equal((await db.query('select training_certification_type_ids from staff_roles where user_id=$1',[trainer])).rows[0].training_certification_type_ids,null);
+ assert.equal((await db.query('select private.staff_can_train($1,$2) ok',[trainer,otherType])).rows[0].ok,true);
+});
+await check('Owner assigns tasks and training types with a recorded review',async()=>{
+ await staffChange(owner,trainer,'responsibilities',null,null,['training','catalog'],[type]);
+ const row=(await db.query('select capabilities,training_certification_type_ids from staff_roles where user_id=$1',[trainer])).rows[0];
+ assert.deepEqual(row.capabilities,['catalog','training']);assert.deepEqual(row.training_certification_type_ids,[type]);
+ assert.equal((await db.query("select count(*)::int n from audit_log where action='staff_responsibilities_updated' and metadata->>'reason' like 'Documented%' ")).rows[0].n,1);
+ assert.equal((await db.query('select count(*)::int n from people')).rows[0].n,2);
+});
+await check('role or activation changes preserve focused duties and equipment scope',async()=>{
+ await staffChange(owner,trainer,'responsibilities',null,null,['training','catalog'],[type]);
+ await staffChange(owner,trainer,'role','viewer',false);
+ let row=(await db.query('select capabilities,training_certification_type_ids from staff_roles where user_id=$1',[trainer])).rows[0];
+ assert.deepEqual(row.capabilities,['catalog','training']);assert.deepEqual(row.training_certification_type_ids,[type]);
+ assert.equal((await db.query('select private.staff_can_train($1,$2) ok',[trainer,type])).rows[0].ok,false);
+ await staffChange(owner,trainer,'role','trainer',true);
+ row=(await db.query('select private.staff_can_train($1,$2) own,private.staff_can_train($1,$3) other',[trainer,type,otherType])).rows[0];
+ assert.deepEqual(row,{own:true,other:false});
+});
+await check('changing focused role labels does not silently grant training',async()=>{
+ await staffChange(owner,access,'role','trainer',true);
+ const row=(await db.query("select private.staff_can($1,'training') t,private.staff_can($1,'access') a",[access])).rows[0];
+ assert.deepEqual(row,{t:false,a:true});
+});
+await check('demoting a broad role requires a fresh focused assignment',async()=>{
+ await db.query('insert into auth.users(id,email,email_confirmed_at)values($1,$2,now())',[adminUser,'admin@example.invalid']);
+ await db.query("insert into staff_roles(user_id,display_name,role)values($1,'Admin','admin')",[adminUser]);
+ await staffChange(owner,adminUser,'role','trainer',true);
+ assert.equal((await db.query('select private.staff_can_train($1,$2) ok',[adminUser,type])).rows[0].ok,false);
+});
+await check('the final active Owner cannot be demoted',()=>rejects('select update_staff_access($1,$2,$3,$4,$5,$6,$7,$8)',[owner,owner,'role','admin',true,null,null,'Documented proposed change'],/final active owner/));
+await check('the final active Owner cannot be deactivated',()=>rejects('select update_staff_access($1,$2,$3,$4,$5,$6,$7,$8)',[owner,owner,'role','owner',false,null,null,'Documented proposed change'],/final active owner/));
+await check('Owner transfer leaves another active Owner in control',async()=>{
+ await db.query('insert into auth.users(id,email,email_confirmed_at)values($1,$2,now())',[secondOwner,'second-owner@example.invalid']);
+ await db.query("insert into staff_roles(user_id,display_name,role)values($1,'Second owner','owner')",[secondOwner]);
+ await staffChange(owner,owner,'role','admin',true);
+ assert.equal((await db.query("select count(*)::int n from staff_roles where role='owner' and active")).rows[0].n,1);
+ await rejects('select update_staff_access($1,$2,$3,$4,$5,$6,$7,$8)',[secondOwner,secondOwner,'role','admin',true,null,null,'Documented proposed change'],/final active owner/);
+});
+await check('focused staff cannot grant their own permissions',()=>rejects('select update_staff_access($1,$2,$3,$4,$5,$6,$7,$8)',[trainer,trainer,'responsibilities',null,null,['training','access'],null,'Attempted self assignment'],/Owner permission/));
+await check('deactivated Owner cannot assign staff tasks',async()=>{
+ await db.query('update staff_roles set active=false where user_id=$1',[owner]);
+ await rejects('select update_staff_access($1,$2,$3,$4,$5,$6,$7,$8)',[owner,trainer,'responsibilities',null,null,['training'],[type],'Documented review'],/Owner permission/);
+});
+await check('trusted staff access RPC cannot be called by signed-in clients',async()=>{
+ await db.exec('set local role authenticated');
+ await rejects('select update_staff_access($1,$2,$3,$4,$5,$6,$7,$8)',[owner,trainer,'role','owner',true,null,null,'Forged actor identity'],/permission denied/);
+});
+await check('trainer cannot record a pass for an unassigned equipment type',async()=>{
+ await staffChange(owner,trainer,'responsibilities',null,null,['training'],[otherType]);
+ await rejects('select record_manual_training($1,$2,$3,current_date,$4,$5,$6)',[trainer,person,type,'Trainer','Synthetic practical assessment','passed'],/Training permission/);
+});
+await check('QR creation cannot bypass equipment training scope',async()=>{
+ await staffChange(owner,trainer,'responsibilities',null,null,['training'],[otherType]);
+ await rejects("insert into training_sessions(token_hash,quiz_id,quiz_version,certification_type_id,trainer_user_id,trainer_name,expires_at,capacity)values('unassigned',$1,1,$2,$3,'Trainer',now()+interval '1 hour',5)",[quiz,type,trainer],/Training permission/);
+});
+await check('existing QR rejects new admissions when equipment authority is removed',async()=>{
+ await staffChange(owner,trainer,'responsibilities',null,null,['training'],[otherType]);
+ await rejects("select start_training_session_attempt($1,'sessionhash','attempt-hash')",[student],/permission/);
+});
+await check('loss of trainer authority keeps a score but cannot issue a new certificate',async()=>{
+ await join();await staffChange(owner,trainer,'responsibilities',null,null,['training'],[otherType]);
+ const result=(await db.query("select submit_quiz_attempt('attempt-hash',$1) result",[JSON.stringify(answers)])).rows[0].result;
+ assert.equal(result.passed,true);assert.equal(result.score,20);assert.equal(result.certificationNames.length,0);
+ assert.equal((await db.query('select count(*)::int n from certifications')).rows[0].n,0);
+});
+await check('equipment scope changes do not revoke already-issued certificates',async()=>{
+ await join();await db.query("select submit_quiz_attempt('attempt-hash',$1)",[JSON.stringify(answers)]);
+ await staffChange(owner,trainer,'responsibilities',null,null,['training'],[otherType]);
+ assert.equal((await db.query("select count(*)::int n from certifications where person_id=$1 and status='active'",[person])).rows[0].n,1);
+});
+await check('training assignment needs equipment scope or explicit general authority',()=>rejects('select update_staff_access($1,$2,$3,$4,$5,$6,$7,$8)',[owner,trainer,'responsibilities',null,null,['training'],[],'Documented eligibility review'],/at least one/));
+await check('responsibility changes require meaningful review evidence',()=>rejects('select update_staff_access($1,$2,$3,$4,$5,$6,$7,$8)',[owner,trainer,'responsibilities',null,null,['training'],[type],'ok'],/review note/));
+await check('staff access does not accept invented duties',()=>rejects('select update_staff_access($1,$2,$3,$4,$5,$6,$7,$8)',[owner,trainer,'responsibilities',null,null,['staff_management'],null,'Documented eligibility review'],/Unknown capability/));
+await check('staff access does not accept missing certification types',()=>rejects('select update_staff_access($1,$2,$3,$4,$5,$6,$7,$8)',[owner,trainer,'responsibilities',null,null,['training'],[uid(9999)],'Documented eligibility review'],/active equipment/));
 // Calendar upgrade tests use the actual SQL queue and synthetic reservations.
 async function calendarBooking(mapped=true) {
   if(mapped)await db.query("update equipment set google_calendar_id='synthetic-calendar' where id=$1",[machine]);

@@ -27,7 +27,7 @@ export function userClient(request: Request): SupabaseClient {
 export async function requireStaff(
   request: Request,
   minimum: 'viewer' | 'trainer' | 'admin' | 'owner' = 'viewer',
-): Promise<{ userId: string; email: string; displayName: string; role: 'viewer' | 'trainer' | 'admin' | 'owner'; capabilities: string[] | null }> {
+): Promise<{ userId: string; email: string; displayName: string; role: 'viewer' | 'trainer' | 'admin' | 'owner'; capabilities: string[] | null; trainingCertificationTypeIds: string[] | null }> {
   const token = (request.headers.get('authorization') || '').replace(/^Bearer\s+/i, '');
   if (!token) throw new HttpError(401, 'Staff sign-in is required.', 'AUTH_REQUIRED');
   const admin = adminClient();
@@ -35,7 +35,7 @@ export async function requireStaff(
   if (userError || !userData.user) throw new HttpError(401, 'Staff session is invalid or expired.', 'AUTH_INVALID');
   const { data: roleData, error: roleError } = await admin
     .from('staff_roles')
-    .select('role, display_name, active, capabilities')
+    .select('role, display_name, active, capabilities, training_certification_type_ids')
     .eq('user_id', userData.user.id)
     .single();
   if (roleError || !roleData?.active) throw new HttpError(403, 'Staff access is inactive.', 'STAFF_INACTIVE');
@@ -48,5 +48,6 @@ export async function requireStaff(
     displayName: String(roleData.display_name),
     role,
     capabilities: roleData.capabilities,
+    trainingCertificationTypeIds: roleData.training_certification_type_ids,
   };
 }

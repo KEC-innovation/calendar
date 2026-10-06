@@ -7,16 +7,17 @@ const secondMachineId='00000000-0000-4000-8000-000000000005';
 const quizId='00000000-0000-4000-8000-000000000004';
 const user={id:userId,email:'student@example.invalid',aud:'authenticated',role:'authenticated',email_confirmed_at:'2026-01-01T00:00:00Z',app_metadata:{provider:'email'},user_metadata:{},created_at:'2026-01-01T00:00:00Z'};
 const jwt=[{alg:'HS256',typ:'JWT'},{sub:userId,role:'authenticated',exp:2200000000},'synthetic-signature'].map(v=>Buffer.from(typeof v==='string'?v:JSON.stringify(v)).toString('base64url')).join('.');
-async function fixture(page:Page,role:'student'|'trainer'='student', options: {availabilityError?:boolean;delayedEquipment?:boolean;availabilityDelayMs?:number} = {}){
+async function fixture(page:Page,role:'student'|'trainer'|'admin'|'owner'='student', options: {availabilityError?:boolean;delayedEquipment?:boolean;availabilityDelayMs?:number} = {}){
  const requests:Array<Record<string,unknown>>=[];
  let booked=false;
+ const staffRows=[{user_id:userId,display_name:'Owner Staff',role:'owner',active:true,created_at:'2026-01-01T00:00:00Z',updated_at:'2026-01-01T00:00:00Z',capabilities:null,training_certification_type_ids:null},{user_id:secondMachineId,display_name:'Focused Trainer',role:'trainer',active:true,created_at:'2026-01-01T00:00:00Z',updated_at:'2026-01-01T00:00:00Z',capabilities:['training','catalog'],training_certification_type_ids:[typeId]}];
  await page.route('https://kec-test.supabase.co/**',async route=>{
   const url=new URL(route.request().url());const body=(route.request().postDataJSON()||{}) as Record<string,unknown>;
   if(route.request().method()==='OPTIONS'){await route.fulfill({status:204,headers:{'Access-Control-Allow-Origin':'*','Access-Control-Allow-Headers':'*'}});return;}
   let data:unknown={};
   if(url.pathname.endsWith('/token'))data={access_token:jwt,refresh_token:'synthetic-refresh',expires_in:36000,token_type:'bearer',user};
   else if(url.pathname.endsWith('/user'))data={user,...user};
-  else if(url.pathname.includes('/rest/v1/staff_roles')){requests.push({action:'staff-role.read'});data=role==='trainer'?{role:'trainer',display_name:'Training Staff',active:true,capabilities:['training']}:null;}
+  else if(url.pathname.includes('/rest/v1/staff_roles')){requests.push({action:'staff-role.read'});data=role==='student'?null:{role,display_name:role==='trainer'?'Training Staff':role==='owner'?'Owner Staff':'Admin Staff',active:true,capabilities:role==='trainer'?['training']:null};}
   else if(url.pathname.endsWith('/portal-api')){
    requests.push(body);
    if(body.action==='account.status')data={passwordChangeRequired:false};
@@ -26,8 +27,22 @@ async function fixture(page:Page,role:'student'|'trainer'='student', options: {a
    if(body.action==='training.join')data={attemptToken:'synthetic-attempt'};
    if(body.action==='training.open')data={url:'https://makerspace.example.invalid/#/training/synthetic-qr',expiresAt:'2030-01-01T10:00:00Z'};
    if(body.action==='training.manual')data={id:'manual'};
+   if(body.action==='staff.capabilities'){
+    const row=staffRows.find(row=>row.user_id===body.userId);
+    if(row){row.capabilities=body.capabilities as string[];row.training_certification_type_ids=body.trainingCertificationTypeIds as string[];row.updated_at='2026-02-01T00:00:00Z';}
+    data={ok:true};
+   }
    if(body.action==='workspace')data={capabilities:['training'],people:[{id:userId,full_name:'Test Student',email:user.email}],types:[{id:typeId,display_name:'3D Printing'}],quizzes:[{id:quizId,display_name:'Test Printing Quiz',duration_minutes:8,pass_mark:16,question_count:20,quiz_certification_mappings:[{certification_type_id:typeId}]}],sessions:[],manual:[],plans:[],subscriptions:[],materials:[]};
    if(body.action==='catalog')data={materials:[],plans:[],equipment:[]};
+  }else if(url.pathname.endsWith('/admin-api')){
+   requests.push(body);
+   if(body.action==='dashboard')data={today:[],todayCount:0,upcoming:[],equipment:{active:2,outOfService:0,inactive:0},recentCertifications:[],failedAttempts:[],calendarFailures:[]};
+   if(body.action==='staff.list')data={rows:staffRows,certificationTypes:[{id:typeId,display_name:'3D Printing'},{id:quizId,display_name:'Laser Cutting'}]};
+   if(body.action==='staff.update'){
+    const row=staffRows.find(row=>row.user_id===body.userId);
+    if(row){row.role=String(body.role);row.active=body.active===true;row.updated_at='2026-03-01T00:00:00Z';}
+    data={ok:true};
+   }
   }else if(url.pathname.endsWith('/public-api')){
    requests.push(body);
    if(options.availabilityDelayMs)await new Promise(resolve=>setTimeout(resolve,options.availabilityDelayMs));
@@ -149,4 +164,63 @@ test('a stored trainer session restores when entering the staff screen',async({p
  await expect(page.getByRole('heading',{name:'Daily operations'})).toBeVisible();
  requests.length=0;await page.reload();await expect(page.getByRole('heading',{name:'Daily operations'})).toBeVisible();
  expect(requests.some(r=>r.action==='staff-role.read')).toBe(true);
+});
+
+
+test('Owner sees current assignments and saves specific training authority with evidence',async({page})=>{
+ const requests=await fixture(page,'owner');await login(page,'/#/staff/login');
+ await expect(page.getByRole('navigation',{name:'Staff workspace'})).toBeAttached();
+ if(await page.getByRole('button',{name:'Open navigation',exact:true}).isVisible())await page.getByRole('button',{name:'Open navigation',exact:true}).click();
+ await page.getByRole('link',{name:'Staff access',exact:true}).click();
+ await expect(page.getByRole('heading',{name:'Staff access',exact:true})).toBeVisible();
+ await page.getByLabel('Staff member',{exact:true}).selectOption(secondMachineId);
+ await expect(page.getByLabel('Run QR quizzes and record equipment training',{exact:true})).toBeChecked();
+ await expect(page.getByLabel('Maintain published materials and electronics',{exact:true})).toBeChecked();
+ await expect(page.getByLabel('Verify one-time safety, waiver and age records; invite accounts',{exact:true})).not.toBeChecked();
+ await expect(page.getByLabel('3D Printing',{exact:true})).toBeChecked();
+ await expect(page.getByLabel('Laser Cutting',{exact:true})).not.toBeChecked();
+ await page.getByLabel('3D Printing',{exact:true}).uncheck();
+ await expect(page.getByRole('button',{name:'Save responsibilities',exact:true})).toBeDisabled();
+ await page.getByLabel('Laser Cutting',{exact:true}).check();
+ await page.getByLabel('Eligibility / responsibility review note',{exact:true}).fill('Verified laser certification and practical trainer eligibility.');
+ await page.getByRole('button',{name:'Save responsibilities',exact:true}).click();
+ await expect(page.getByLabel('Staff member',{exact:true})).toHaveValue(secondMachineId);
+ await expect(page.getByLabel('Laser Cutting',{exact:true})).toBeChecked();
+ await expect.poll(()=>requests.filter(r=>r.action==='staff.list').length).toBeGreaterThan(1);
+ const request=requests.find(r=>r.action==='staff.capabilities');
+ expect(request?.trainingCertificationTypeIds).toEqual([quizId]);expect(request?.capabilities).toEqual(['training','catalog']);
+ expect(request?.reason).toBe('Verified laser certification and practical trainer eligibility.');
+ const row=page.getByRole('row').filter({has:page.getByText('Focused Trainer',{exact:true})});
+ await expect(row).toContainText('Laser Cutting');
+ await page.getByRole('button',{name:'Edit access for Owner Staff',exact:true}).click();
+ const dialog=page.getByRole('dialog',{name:'Review staff access'});
+ await expect(dialog.getByLabel('Active staff access')).toBeDisabled();
+ await expect(dialog.getByText('The final active Owner must remain active with Owner access.')).toBeVisible();
+ await dialog.getByRole('button',{name:'Cancel',exact:true}).click();
+ expect(await page.evaluate(()=>document.documentElement.scrollWidth<=window.innerWidth)).toBe(true);
+ await page.screenshot({path:test.info().outputPath('staff-responsibilities.png'),fullPage:true});
+});
+test('Owner reviews activation changes without clearing assigned duties',async({page})=>{
+ const requests=await fixture(page,'owner');await login(page,'/#/staff/login');
+ await expect(page.getByRole('navigation',{name:'Staff workspace'})).toBeAttached();
+ if(await page.getByRole('button',{name:'Open navigation',exact:true}).isVisible())await page.getByRole('button',{name:'Open navigation',exact:true}).click();
+ await page.getByRole('link',{name:'Staff access',exact:true}).click();
+ await page.getByRole('button',{name:'Edit access for Focused Trainer',exact:true}).click();
+ const dialog=page.getByRole('dialog',{name:'Review staff access'});
+ await expect(dialog.getByLabel('Role',{exact:true})).toHaveValue('trainer');
+ await dialog.getByLabel('Active staff access',{exact:true}).uncheck();
+ await dialog.getByLabel('Access review note',{exact:true}).fill('Staff member is away; retain their reviewed responsibilities.');
+ await dialog.getByRole('button',{name:'Save staff access',exact:true}).click();
+ await expect(dialog).toHaveCount(0);
+ const request=requests.find(r=>r.action==='staff.update');expect(request?.role).toBe('trainer');expect(request?.active).toBe(false);expect(request?.capabilities).toBeUndefined();
+ const row=page.getByRole('row').filter({has:page.getByText('Focused Trainer',{exact:true})});
+ await expect(row).toContainText('Inactive');await expect(row).toContainText('training, catalog');await expect(row).toContainText('3D Printing');
+});
+test('Admin keeps all operational navigation without Owner staff management',async({page})=>{
+ await fixture(page,'admin');await login(page,'/#/staff/login');
+ await expect(page.getByRole('navigation',{name:'Staff workspace'})).toBeAttached();
+ if(await page.getByRole('button',{name:'Open navigation',exact:true}).isVisible())await page.getByRole('button',{name:'Open navigation',exact:true}).click();
+ const navigation=page.getByRole('navigation',{name:'Staff workspace'});
+ for(const name of ['Overview','Equipment','People','Certifications','Bookings','Training','Hours & closures','Audit trail'])await expect(navigation.getByRole('link',{name,exact:true})).toBeVisible();
+ await expect(navigation.getByRole('link',{name:'Staff access',exact:true})).toHaveCount(0);
 });

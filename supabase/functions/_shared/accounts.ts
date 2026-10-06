@@ -10,10 +10,7 @@ export async function requireAccount(request: Request, allowPasswordChange = fal
  if(security?.password_change_required && !allowPasswordChange) throw new HttpError(403,'Set your own password in Account before continuing.','PASSWORD_CHANGE_REQUIRED');
  return {user:data.user,security};
 }
-export const capabilityNames=['training','access','subscriptions','catalog'] as const;
-export function staffCan(staff:{role:string;capabilities?:string[]|null},cap:string) {
- return ['owner','admin'].includes(staff.role)||(staff.capabilities??(staff.role==='trainer'?['training']:[])).includes(cap);
-}
+export { capabilityNames, staffCan, staffCanTrain } from './staffPermissions.ts';
 export function appUrl() {
  const url=Deno.env.get('APP_URL');
  if(!url) throw new HttpError(503,'Configure APP_URL before sending invitations or creating training QR codes.','SETUP_REQUIRED');

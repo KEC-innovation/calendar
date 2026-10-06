@@ -349,9 +349,11 @@ Deno.serve((request) => handle(request, async () => {
 
   if (action === 'staff.list') {
     assertRole(staff.role, 'owner');
-    const { data, error } = await admin.from('staff_roles').select('user_id,display_name,role,active,capabilities,created_at,updated_at').order('display_name');
+    const { data, error } = await admin.from('staff_roles').select('user_id,display_name,role,active,capabilities,training_certification_type_ids,created_at,updated_at').order('display_name');
     if (error) throw error;
-    return json(request, { rows: data || [] });
+    const { data: types, error: typesError } = await admin.from('certification_types').select('id,display_name').eq('active', true).order('display_name');
+    if (typesError) throw typesError;
+    return json(request, { rows: data || [], certificationTypes: types || [] });
   }
 
   if (action === 'staff.invite') {
@@ -362,7 +364,7 @@ Deno.serve((request) => handle(request, async () => {
     if (!Object.hasOwn(ROLE_RANK, role)) throw new HttpError(400, 'Staff role is invalid.', 'VALIDATION_ERROR');
     const { data, error } = await admin.auth.admin.inviteUserByEmail(email, { data: { display_name: displayName }, redirectTo: `${appUrl()}?account=reset` });
     if (error || !data.user) throw new HttpError(400, error?.message || 'Staff invitation failed.', 'STAFF_INVITE_FAILED');
-    const { error: roleError } = await admin.from('staff_roles').upsert({ user_id: data.user.id, display_name: displayName, role, active: true, created_by: staff.userId });
+    const { error: roleError } = await admin.from('staff_roles').upsert({ user_id: data.user.id, display_name: displayName, role, active: true, capabilities: role === 'trainer' ? ['training'] : role === 'viewer' ? [] : null, training_certification_type_ids: ['viewer','trainer'].includes(role) ? [] : null, created_by: staff.userId });
     if (roleError) throw roleError;
     await writeAudit(admin, staff, 'staff_invited', 'staff_roles', data.user.id, { role });
     return json(request, { userId: data.user.id }, 201);
@@ -373,17 +375,10 @@ Deno.serve((request) => handle(request, async () => {
     const userId = requireUuid(body.userId, 'Staff account');
     const role = text(body.role, 20) as Role;
     if (!Object.hasOwn(ROLE_RANK, role)) throw new HttpError(400, 'Staff role is invalid.', 'VALIDATION_ERROR');
-    const active = body.active !== false;
-    const { data: target, error: targetError } = await admin.from('staff_roles').select('role,active').eq('user_id', userId).single();
-    if (targetError) throw targetError;
-    if (target.role === 'owner' && target.active && (!active || role !== 'owner')) {
-      const { count, error: countError } = await admin.from('staff_roles').select('user_id', { count: 'exact', head: true }).eq('role', 'owner').eq('active', true);
-      if (countError) throw countError;
-      if ((count || 0) <= 1) throw new HttpError(409, 'The final active owner cannot be demoted or deactivated.', 'LAST_OWNER');
-    }
-    const { error } = await admin.from('staff_roles').update({ role, active, capabilities: null, deactivated_at: active ? null : new Date().toISOString(), deactivated_by: active ? null : staff.userId }).eq('user_id', userId);
-    if (error) throw error;
-    await writeAudit(admin, staff, 'staff_role_changed', 'staff_roles', userId, { role, active });
+    if (typeof body.active !== 'boolean') throw new HttpError(400, 'Choose an active state.', 'VALIDATION_ERROR');
+    const reason = requiredText(body.reason, 'Access review note', 1000);
+    const { error } = await admin.rpc('update_staff_access', { p_actor: staff.userId, p_user: userId, p_mode: 'role', p_role: role, p_active: body.active, p_reason: reason });
+    if (error) throw new HttpError(400, error.message, 'STAFF_UPDATE_FAILED');
     return json(request, { ok: true });
   }
 

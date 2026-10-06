@@ -1,5 +1,5 @@
 import { adminClient, requireStaff, userClient } from '../_shared/supabase.ts';
-import { requireAccount, staffCan, capabilityNames, appUrl } from '../_shared/accounts.ts';
+import { requireAccount, staffCan, staffCanTrain, capabilityNames, appUrl } from '../_shared/accounts.ts';
 import { handle,HttpError,json,readJson,text,requiredText,requireUuid } from '../_shared/http.ts';
 import { consumeRateLimit,randomToken,sha256,safeEmail } from '../_shared/security.ts';
 import { writeAudit } from '../_shared/audit.ts';
@@ -59,9 +59,14 @@ Deno.serve(request=>handle(request,async()=>{
    data.types=checked(await admin.from('certification_types').select('id,display_name').eq('active',true).order('display_name'));
   }
   if(caps.includes('training')) {
-   data.quizzes=checked(await admin.from('quizzes').select('id,display_name,active,duration_minutes,pass_mark,question_count,quiz_certification_mappings(certification_type_id)').eq('active',true));
-   data.sessions=checked(await admin.from('training_sessions').select('id,expires_at,revoked_at,capacity,trainer_name,quiz_id,certification_type_id,quiz_attempts(id,status,passed)').order('created_at',{ascending:false}).limit(40));
-   data.manual=checked(await admin.from('manual_training_records').select('id,trained_on,trainer_name,outcome,evidence,people(full_name),certification_types(display_name)').order('created_at',{ascending:false}).limit(40));
+   data.types=data.types.filter((type:any)=>staffCanTrain(staff,type.id));
+   data.quizzes=checked(await admin.from('quizzes').select('id,display_name,active,duration_minutes,pass_mark,question_count,quiz_certification_mappings(certification_type_id)').eq('active',true)).map((quiz:any)=>({...quiz,quiz_certification_mappings:quiz.quiz_certification_mappings.filter((mapping:any)=>staffCanTrain(staff,mapping.certification_type_id))})).filter((quiz:any)=>quiz.quiz_certification_mappings.length);
+   let sessionsQuery=admin.from('training_sessions').select('id,expires_at,revoked_at,capacity,trainer_name,quiz_id,certification_type_id,quiz_attempts(id,status,passed)').order('created_at',{ascending:false}).limit(40);
+   if(!['owner','admin'].includes(staff.role)) sessionsQuery=sessionsQuery.eq('trainer_user_id',staff.userId);
+   data.sessions=checked(await sessionsQuery);
+   let manualQuery=admin.from('manual_training_records').select('id,trained_on,trainer_name,outcome,evidence,people(full_name),certification_types(display_name)').order('created_at',{ascending:false}).limit(40);
+   if(!['owner','admin'].includes(staff.role)) manualQuery=manualQuery.eq('recorded_by',staff.userId);
+   data.manual=checked(await manualQuery);
   }
   if(caps.includes('subscriptions')) {
    data.plans=checked(await admin.from('subscription_plans').select('*').eq('active',true).order('name'));
@@ -73,6 +78,7 @@ Deno.serve(request=>handle(request,async()=>{
  if(action==='training.open') {
   allow('training');
   const quizId=requireUuid(body.quizId,'Quiz');const typeId=requireUuid(body.certificationTypeId,'Certification');
+  if(!staffCanTrain(staff,typeId)) throw new HttpError(403,'This equipment certification is outside your assigned training authority.','PERMISSION_REQUIRED');
   const q=checked(await admin.from('quizzes').select('id,version,active').eq('id',quizId).eq('active',true).single());
   checked(await admin.from('quiz_certification_mappings').select('quiz_id').eq('quiz_id',quizId).eq('certification_type_id',typeId).single());
   const minutes=Number(body.minutes),capacity=Number(body.capacity);
@@ -158,8 +164,11 @@ Deno.serve(request=>handle(request,async()=>{
   if(staff.role!=='owner') throw new HttpError(403,'Owner permission required.','PERMISSION_REQUIRED');
   const uid=requireUuid(body.userId,'Staff account');const caps=body.capabilities;
   if(!Array.isArray(caps)||caps.some(c=>!capabilityNames.includes(c as any))) throw new HttpError(400,'Unknown capability.','VALIDATION_ERROR');
-  checked(await admin.from('staff_roles').update({capabilities:caps}).eq('user_id',uid).in('role',['viewer','trainer']).select('user_id').single());
-  await writeAudit(admin,staff,'staff_responsibilities_updated','staff_roles',uid,{capabilities:caps});return json(request,{ok:true});
+  const scope=body.trainingCertificationTypeIds;
+  if(scope!==null && !Array.isArray(scope)) throw new HttpError(400,'Choose equipment training authority.','VALIDATION_ERROR');
+  const typeIds=scope===null?null:scope.map(id=>requireUuid(id,'Training certification'));
+  checked(await admin.rpc('update_staff_access',{p_actor:staff.userId,p_user:uid,p_mode:'responsibilities',p_capabilities:caps,p_training_type_ids:typeIds,p_reason:requiredText(body.reason,'Eligibility / responsibility review note',1000)}));
+  return json(request,{ok:true});
  }
  throw new HttpError(404,'Unknown portal operation.','ACTION_NOT_FOUND');
 }));
