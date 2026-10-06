@@ -77,5 +77,50 @@ await check('trainer cannot create a subscription',()=>rejects('select add_clien
 await check('new password clears initial-password restriction',async()=>{await db.query('insert into account_security(user_id,password_change_required)values($1,true)',[student]);await db.query("update auth.users set encrypted_password='synthetic hash' where id=$1",[student]);assert.equal((await db.query('select password_change_required from account_security')).rows[0].password_change_required,false);});
 await check('access officer can record compliance evidence atomically',async()=>{await db.query('select verify_person_records($1,$2,$3,$4,$5,$6)',[access,person,'verified','verified','adult','Verified existing signed waiver and induction attendance']);assert.equal((await db.query("select count(*)::int n from audit_log where action='compliance_evidence_recorded'")).rows[0].n,1);});
 await check('trainer cannot verify access prerequisites',()=>rejects('select verify_person_records($1,$2,$3,$4,$5,$6)',[trainer,person,'verified','verified','adult','Synthetic evidence review'],/Access permission/));
+// Calendar upgrade tests use the actual SQL queue and synthetic reservations.
+async function calendarBooking(mapped=true) {
+  if(mapped)await db.query("update equipment set google_calendar_id='synthetic-calendar' where id=$1",[machine]);
+  else await db.query('update equipment set google_calendar_id=null where id=$1',[machine]);
+  return (await db.query(`insert into bookings(booking_reference,person_id,equipment_id,starts_at,ends_at,contact_name,contact_email,contact_phone)
+    values('KEC-CALENDAR-TEST',$1,$2,'2030-01-07T04:15:00Z','2030-01-07T05:15:00Z','Synthetic student','student@example.invalid','synthetic') returning id`,[person,machine])).rows[0].id;
+}
+await check('new booking queues one calendar upsert automatically',async()=>{
+  await calendarBooking();assert.equal((await db.query('select count(*)::int n from calendar_sync_jobs')).rows[0].n,1);
+});
+await check('calendar status writeback does not recursively requeue',async()=>{
+  const id=await calendarBooking();await db.exec("update calendar_sync_jobs set status='synced'");
+  await db.query("update bookings set calendar_sync_status='synced',calendar_event_id='event123' where id=$1",[id]);
+  assert.equal((await db.query('select status from calendar_sync_jobs')).rows[0].status,'synced');
+});
+await check('booking changes requeue previously synced events',async()=>{
+  const id=await calendarBooking();await db.exec("update calendar_sync_jobs set status='synced'");
+  await db.query("update bookings set contact_name='Changed synthetic name' where id=$1",[id]);
+  assert.equal((await db.query('select status from calendar_sync_jobs')).rows[0].status,'pending');
+});
+await check('only one operation per booking can be claimed at once',async()=>{
+  const id=await calendarBooking();await db.query("insert into calendar_sync_jobs(booking_id,operation)values($1,'cancel')",[id]);
+  assert.equal((await db.query('select * from claim_calendar_sync_jobs(20)')).rows.length,1);
+  assert.equal((await db.query('select * from claim_calendar_sync_jobs(20)')).rows.length,0);
+});
+await check('abandoned calendar work becomes claimable after ten minutes',async()=>{
+  await calendarBooking();await db.exec("update calendar_sync_jobs set status='processing',locked_at=now()-interval '11 minutes'");
+  assert.equal((await db.query('select * from claim_calendar_sync_jobs(20)')).rows.length,1);
+});
+await check('disabled-integration jobs and due failures can be recovered',async()=>{
+  await calendarBooking();await db.exec("update calendar_sync_jobs set status='not_configured'");
+  assert.equal((await db.query('select * from claim_calendar_sync_jobs(20)')).rows.length,1);
+  await db.exec("update calendar_sync_jobs set status='failed',next_attempt_at=now()+interval '1 hour'");
+  assert.equal((await db.query('select * from claim_calendar_sync_jobs(20)')).rows.length,0);
+  await db.exec("update calendar_sync_jobs set next_attempt_at=now()-interval '1 minute'");
+  assert.equal((await db.query('select * from claim_calendar_sync_jobs(20)')).rows.length,1);
+});
+await check('first calendar mapping picks up already-created future bookings',async()=>{
+  await calendarBooking(false);assert.equal((await db.query('select count(*)::int n from calendar_sync_jobs')).rows[0].n,0);
+  await db.query("update equipment set google_calendar_id='synthetic-calendar' where id=$1",[machine]);
+  assert.equal((await db.query('select count(*)::int n from calendar_sync_jobs')).rows[0].n,1);
+});
+await check('authenticated clients cannot run the calendar worker RPC',async()=>{
+  await db.exec('set local role authenticated');await rejects('select * from claim_calendar_sync_jobs(20)',[],/permission denied/);
+});
 console.log(`${count} upgrade checks passed. Real PostgreSQL engine; synthetic Auth identities. Hosted Auth, SMTP and external calendars are not exercised.`);
 await db.close();

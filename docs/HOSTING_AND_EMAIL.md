@@ -75,6 +75,8 @@ Prefer opening login/booking in a normal page for reliable email recovery and ph
 
 ## Google Calendar display
 
-The existing `calendar-sync` worker remains optional. It writes app bookings to configured equipment calendars; it does not read Google events to accept bookings. The new event payload omits participants’ emails and project details and disables guest edits/invitations. Give viewers read-only calendar sharing rights in Google. Google calendar owners can still edit their own events, but those edits never change app bookings.
+The existing `calendar-sync` worker remains optional. It writes app bookings to configured equipment calendars; it does not read Google events to accept bookings. The event payload includes equipment, booking reference and status. It omits emails and project details and disables guest edits/invitations. Names can be included in private staff calendars using GOOGLE_CALENDAR_INCLUDE_NAMES=true. Give viewers read-only calendar sharing rights in Google. Google calendar owners can still edit their own events, but those edits never change app bookings.
 
 Enable the existing worker and its schedule only if you want the mirror. The integration settings and service-account secrets must already be configured; simply deploying the function does not create a schedule. The database remains authoritative even if synchronization is delayed or disabled.
+
+For the tested calendar reliability upgrade and activation steps, see `GOOGLE_CALENDAR_SETUP.md`.

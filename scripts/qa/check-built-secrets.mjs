@@ -1,9 +1,9 @@
 import { readdir, readFile, stat } from 'node:fs/promises';
 import { join, relative } from 'node:path';
 import process from 'node:process';
-import { URL } from 'node:url';
+import { fileURLToPath, URL } from 'node:url';
 
-const root = new URL('../../dist/', import.meta.url).pathname;
+const root = fileURLToPath(new URL('../../dist/', import.meta.url));
 const forbidden = [
   ['Supabase secret key', /(?:service_role|sb_secret_)[A-Za-z0-9._-]{12,}/],
   ['private key', /-----BEGIN (?:RSA |EC )?PRIVATE KEY-----/],
