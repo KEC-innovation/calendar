@@ -58,3 +58,5 @@ Owner controls archival of people, equipment, published catalog items, closures 
 Registration creates a personal record only after email confirmation and profile confirmation. Existing email-matched records are linked without overwriting details, certifications or passed results. Student-provided category/profile fields never create a staff role or certify safety, waiver, age or equipment training.
 
 Participants request equipment training with a phone number and availability in My account. Assigned trainers see only requests inside their equipment scope; Admin and Owner see all types. Staff can post a future session time and instructions, complete an attended appointment or cancel a request with a note. Completing the request never issues a certificate: use the existing supervised quiz or documented manual assessment. Minors use supervised outreach through the help desk.
+
+Email-code sign-in and custom email delivery are deferred to the production-email phase. This layout release retains the deployed password/authenticator requirements and adds no roles or permissions.

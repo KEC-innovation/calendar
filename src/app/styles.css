@@ -436,3 +436,32 @@ html,body,#root { min-width:0; }
 @media(max-width:380px) { .metric-grid { grid-template-columns:1fr; }.simple-card { padding:1rem; } }
 
 .training-request-card { padding:1rem 0;margin:1rem 0;border-top:1px solid var(--line);overflow-wrap:anywhere; }.training-request-card p { white-space:pre-wrap; }.help-desk { font-size:.9rem; }.training-request-card summary { cursor:pointer;color:#1769aa;margin:.75rem 0;font-weight:650; }
+
+/* Compact public entry and consistent account forms. */
+.home-shell { width:min(100%,960px);margin:0 auto;padding:32px 24px 56px; }
+.home-shell>header { max-width:none;padding:0 0 24px;border-bottom:1px solid var(--line); }
+.home-welcome { max-width:650px;padding:56px 0 32px;margin:0; }
+.home-welcome h1 { font-size:clamp(2rem,4vw,2.75rem);line-height:1.15;margin:12px 0 18px; }
+.home-welcome>p { line-height:1.65; }
+.home-actions { display:flex;justify-content:flex-start;gap:12px;flex-wrap:wrap;margin:24px 0; }
+.home-returning { max-width:520px;color:#536678;font-size:.95rem; }
+.home-links { display:flex;gap:24px;flex-wrap:wrap;padding-top:24px;border-top:1px solid var(--line); }
+.auth-shell { width:min(100%,760px);margin:0 auto;padding:28px 24px 48px; }
+.auth-shell>header { margin:0 0 28px; }
+.auth-card { max-width:480px;padding:32px;box-shadow:0 8px 28px rgb(25 47 70 / 6%); }
+.auth-card--register { max-width:660px; }
+.auth-card h1 { margin:8px 0 12px;font-size:1.75rem; }
+.auth-card>p { line-height:1.55;overflow-wrap:anywhere; }
+.account-form { display:grid;grid-template-columns:minmax(0,1fr);gap:18px;align-items:start;margin:24px 0 18px; }
+.account-form .field { margin:0;min-width:0; }
+.account-form .form-grid { width:100%;gap:18px; }
+.account-form>.button { width:100%;margin-top:2px; }
+.account-form>.check-line { align-items:flex-start;margin:0; }
+.account-form>p { margin:0;font-size:.9rem;line-height:1.55; }
+.auth-note { color:#536678;font-size:.9rem; }
+.personal-profile>summary { cursor:pointer;font-weight:650;line-height:1.5; }
+.personal-profile .portal-form { grid-template-columns:minmax(0,1fr); }
+.personal-profile .form-grid { width:100%; }
+@media(max-width:600px) { .auth-shell,.home-shell { padding:20px 16px 40px; }.auth-card { padding:24px 20px; }.home-welcome { padding:36px 0 24px; }.auth-card .form-grid { grid-template-columns:1fr; }.auth-shell>header { margin-bottom:22px; }.home-links { gap:16px; } }
+
+.profile-fields .field--wide { grid-column:1/-1; }

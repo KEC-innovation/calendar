@@ -2,10 +2,10 @@
 
 ## Participants
 
-1. Open Home -> Register / first sign in.
+1. Open Home -> Register.
 2. New users enter name, category, phone, email and a password twice. KEC students include their roll number; external college/business users include their organization.
 3. Existing trainees select **Already trained? Link my existing Makerspace record**, use the email on their training record, and confirm it. Existing Auth users choose Sign in or Forgot password. Signup responses deliberately do not announce whether someone else's email has an account.
-4. Confirm email, open My account, and confirm the profile if no existing record is found. Existing details and passes are not overwritten. Staff-only accounts can use their staff workspace without creating a personal student record.
+4. Confirm email, open My account, and confirm the profile if no existing record is found. Existing details and passes are not overwritten. Staff-only accounts can use their staff workspace without creating a personal student record. Adding a personal booking profile is optional and collapsed until selected.
 5. Request equipment training with a contact number, preferred days/times and optional questions. Staff see the request and post session time/instructions in My account. Requests are visible in the app; this update does not send training-schedule notification emails.
 6. Questions and special arrangements go to the help desk, including minor outreach: kec.innovation@kecktm.edu.np or the official website's Contact page.
 7. Hands-on training and the assessment remain separate. A scheduled/completed appointment does not grant booking eligibility. The existing safety, waiver, adult status and equipment certification checks still apply.
@@ -69,3 +69,16 @@ Overview Review opens saved scores and answer evidence, plus an audited follow-u
 People name/safety/booking-heading sorting applies across the paginated query. Other tables sort their loaded rows, with a visible note saying so. Table scrolling is inside the panel with sticky headings and a bounded height. Narrow dashboard columns stack, and dialogs cover the viewport rather than being constrained by a panel.
 
 Responsibilities load only the selected task. Independent queries run together, and returning to a workspace within 15 seconds reuses a bounded in-memory cache. Account/token keys keep users separate; writes, manual refresh and sign-out invalidate it. Booking availability remains separately refreshed and rechecked when booking. Hosted cold starts and network latency still affect uncached requests.
+
+## Deferred email phase
+
+The compact entry-screen release keeps the already-deployed password/authenticator staff sign-in. It does not enable email-code sign-in, change the database authentication policy, or change staff assignments. Existing Admins and Owners do not register again; new staff accept an Owner invitation once.
+
+Production email delivery and branded templates are deferred. This hosted Free project uses Supabase's built-in sender and its email-template editor is locked. Customizing the templates requires a configured SMTP provider or an eligible paid plan. The built-in sender is restricted to project-team addresses, so ordinary student confirmation/invitation/recovery delivery is not production-ready until email setup is completed. Do not disable email confirmation to work around delivery.
+
+The supplied docs/auth-email-templates HTML files are prepared designs, not active dashboard settings. The staff-otp.html file is reserved for the later email-code rollout. Finish and test production delivery before enabling that client/server flow. Revisit the current source and revalidate the authentication changes during that phase rather than reapplying an older patch over subsequent edits.
+
+References:
+- https://supabase.com/changelog/46599-changes-to-email-template-customisation-on-free-tier
+- https://supabase.com/docs/guides/auth/auth-smtp
+- https://supabase.com/docs/guides/auth/auth-email-passwordless

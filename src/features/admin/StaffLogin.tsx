@@ -1,5 +1,4 @@
 import { useState } from 'react';
-import { ChevronLeft, LockKeyhole } from 'lucide-react';
 import { Brand } from '../../components/Brand';
 import { Spinner } from '../../components/Spinner';
 import { signIn, signInDemo } from '../../lib/auth';
@@ -34,21 +33,21 @@ export function StaffLogin({ onSignedIn }: { onSignedIn: (session: StaffSession)
   }
 
   return (
-    <main className="login-shell">
-      <div className="login-brand-panel"><Brand /><div><p className="eyebrow">Staff workspace</p><h1>Run daily Makerspace operations from one place.</h1><p>Bookings, equipment, certifications, supervised quizzes, schedules, and audit history.</p></div></div>
-      <section className="login-card">
-        <a className="back-button" href="#/"><ChevronLeft size={17} /> Home</a>
-        <div className="login-icon"><LockKeyhole size={24} /></div>
-        <h2>Staff sign in</h2>
-        <p>Use the account invited through KEC Makerspace.</p>
+    <main className="simple-shell auth-shell">
+      <header><Brand /><a href="#/">Home</a></header>
+      <section className="simple-card auth-card">
+        <p className="eyebrow">Staff workspace</p>
+        <h1>Staff sign in</h1>
+        <p>Use your invited email and password. Existing Admins and Owners do not need to register again.</p>
         {error && <div className="alert alert--error" role="alert">{error}</div>}
-        <form onSubmit={(event) => void submit(event)}>
+        <form className="account-form" onSubmit={(event) => void submit(event)}>
           <label className="field"><span>Email</span><input type="email" required value={email} onChange={(event) => setEmail(event.target.value)} autoComplete="username" /></label>
           <label className="field"><span>Password</span><input type="password" required value={password} onChange={(event) => setPassword(event.target.value)} autoComplete="current-password" /></label>
           <button className="button button--primary button--wide" disabled={busy}>{busy ? <Spinner label="Signing in" /> : 'Sign in'}</button>
         </form>
-        {isMockMode() && <button className="button button--secondary button--wide demo-login" type="button" disabled={busy} onClick={() => void enterDemo()}>Enter demo owner workspace</button>}
-        <p className="login-help"><a href="#/account">Forgot password? Open account recovery</a>. Ask an owner if your staff role has been deactivated.</p>
+        {isMockMode() && <button className="button button--secondary button--wide" type="button" disabled={busy} onClick={() => void enterDemo()}>Enter demo owner workspace</button>}
+        <p className="auth-note">An Owner invites new staff and assigns their access.</p>
+        <div className="portal-actions"><a href="#/account">Account recovery</a><a href="#/account">Student sign in</a></div>
       </section>
     </main>
   );
