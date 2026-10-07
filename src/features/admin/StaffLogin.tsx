@@ -37,7 +37,7 @@ export function StaffLogin({ onSignedIn }: { onSignedIn: (session: StaffSession)
     <main className="login-shell">
       <div className="login-brand-panel"><Brand /><div><p className="eyebrow">Staff workspace</p><h1>Run daily Makerspace operations from one place.</h1><p>Bookings, equipment, certifications, supervised quizzes, schedules, and audit history.</p></div></div>
       <section className="login-card">
-        <a className="back-button" href="#/"><ChevronLeft size={17} /> Public booking</a>
+        <a className="back-button" href="#/"><ChevronLeft size={17} /> Home</a>
         <div className="login-icon"><LockKeyhole size={24} /></div>
         <h2>Staff sign in</h2>
         <p>Use the account invited through KEC Makerspace.</p>

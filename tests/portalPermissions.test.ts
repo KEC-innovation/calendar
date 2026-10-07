@@ -8,8 +8,9 @@ const state = vi.hoisted(() => ({
 function query(table: string) {
   let rows = [...(state.tables[table] ?? [])]; let single = false;
   const result = {
-    select: () => result, order: () => result, limit: () => result,
+    single: () => { single=true;return result; }, select: () => result, order: () => result, limit: () => result,
     eq: (key: string, value: unknown) => { rows = rows.filter(row => row[key] === value); return result; },
+    in:(key:string,values:unknown[])=>{rows=rows.filter(row=>values.includes(row[key]));return result;},
     maybeSingle: () => { single = true; return result; },
     then: (resolve: (value: { data: Row[] | Row | null; error: null }) => unknown) => Promise.resolve(resolve({ data: single ? rows[0] ?? null : rows, error: null })),
   };
@@ -19,7 +20,7 @@ vi.mock('../supabase/functions/_shared/supabase.ts', () => ({
   requireStaff: async () => state.actor,
   adminClient: () => ({
     from: query,
-    auth: { getUser: async () => ({ data: { user: { id: state.actor.userId, email_confirmed_at: '2026-01-01' } }, error: null }) },
+    auth: { getUser: async () => ({ data: { user: { id: state.actor.userId, email: 'trainer@example.invalid', email_confirmed_at: '2026-01-01', user_metadata: {} } }, error: null }) },
     rpc: async (name: string, args: Row) => { state.rpcCalls.push({ name, args }); return { data: true, error: null }; },
   }),
   userClient: () => ({}),
@@ -77,4 +78,13 @@ describe('real portal permission boundary with synthetic database responses', ()
     expect(response.status).toBe(200);
     expect(state.rpcCalls.find(call => call.name === 'update_staff_access')?.args).toEqual({ p_actor: state.actor.userId, p_user: secondType, p_mode: 'responsibilities', p_capabilities: ['training'], p_training_type_ids: [firstType], p_reason: 'Verified practical trainer eligibility.' });
   });
+  it('does not return other task data for a selected workspace tab',async()=>{state.actor.role='owner';const response=await invoke({action:'workspace',task:'catalog'});expect(response.status).toBe(200);const data=await response.json();expect(data.people).toEqual([]);expect(data.quizzes).toEqual([]);expect(data.sessions).toEqual([]);});
+  it('rejects an unassigned tab even when a client claims Owner',async()=>{const response=await invoke({action:'workspace',task:'catalog',role:'owner'});expect(response.status).toBe(403);});
+  it('does not mistake a staff-only account for a missing student record',async()=>{state.tables.staff_roles=[{user_id:state.actor.userId,role:'owner',active:true}];const response=await invoke({action:'account.overview'});expect(response.status).toBe(200);const data=await response.json();expect(data.person).toBeNull();expect(data.staff.role).toBe('owner');});
+  it('uses authenticated account ID when completing a personal profile',async()=>{const response=await invoke({action:'account.complete-profile',userId:secondType,profile:{fullName:'Own profile',category:'kec_student',rollNumber:'ROLL',phone:'980',organization:'KEC'}});expect(response.status).toBe(201);expect(state.rpcCalls.find(call=>call.name==='complete_account_profile')?.args.p_user).toBe(state.actor.userId);});
+  it('Admin and MS Ambassador cannot archive catalog records',async()=>{for(const role of ['admin','ambassador']){state.actor.role=role;const response=await invoke({action:'catalog.archive',id:firstType,role:'owner',reason:'Forged owner archival request'});expect(response.status).toBe(403);}});
+
+  it('equipment-scoped training queue excludes other equipment requests',async()=>{state.tables.training_requests=[{id:'assigned',status:'pending',certification_type_id:firstType},{id:'other',status:'pending',certification_type_id:secondType}];const response=await invoke({action:'workspace',task:'training'});expect(response.status).toBe(200);expect((await response.json()).requests.map((row:Row)=>row.id)).toEqual(['assigned']);});
+  it('a training request cannot impersonate another account',async()=>{const response=await invoke({action:'account.request-training',userId:secondType,certificationTypeId:firstType,phone:'9800000000',availability:'Monday after two pm',note:'Beginner'});expect(response.status).toBe(201);expect(state.rpcCalls.find(call=>call.name==='request_account_training')?.args.p_user).toBe(state.actor.userId);});
+
 });

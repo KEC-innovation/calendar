@@ -99,8 +99,8 @@ Deno.serve((request) => handle(request, async () => {
   const admin = adminClient();
 
   if (action === 'start') {
-    await requireAccount(request);
-    const staff = await requireStaff(request, 'admin');
+    const {user}=await requireAccount(request);
+    const staff = await requireStaff(request, 'admin',user);
     await consumeRateLimit(admin, request, `quiz-start-${staff.userId}`, 12, 600);
     const quizId = requireUuid(body.quizId, 'Quiz');
     const participantValue = body.participant;

@@ -4,8 +4,8 @@ import { handle, HttpError, json, readJson, requireUuid, requiredText, text } fr
 import { safeEmail } from '../_shared/security.ts';
 import { writeAudit } from '../_shared/audit.ts';
 
-type Role = 'viewer' | 'trainer' | 'admin' | 'owner';
-const ROLE_RANK: Record<Role, number> = { viewer: 10, trainer: 20, admin: 30, owner: 40 };
+type Role = 'viewer' | 'ambassador' | 'trainer' | 'admin' | 'owner';
+const ROLE_RANK: Record<Role, number> = { viewer: 10, ambassador: 10, trainer: 20, admin: 30, owner: 40 };
 
 function assertRole(actual: Role, minimum: Role): void {
   if (ROLE_RANK[actual] < ROLE_RANK[minimum]) throw new HttpError(403, `${minimum[0]?.toUpperCase()}${minimum.slice(1)} role required.`, 'ROLE_REQUIRED');
@@ -31,8 +31,8 @@ function localDate(): string {
 Deno.serve((request) => handle(request, async () => {
   const body = await readJson(request, 300_000);
   const action = text(body.action, 80);
-  await requireAccount(request);
-  const staff = await requireStaff(request, 'viewer');
+  const { user } = await requireAccount(request);
+  const staff = await requireStaff(request, 'viewer', user);
   if (!['owner','admin'].includes(staff.role)) throw new HttpError(403,'Use your assigned responsibilities workspace.','SCOPED_WORKSPACE');
   const admin = adminClient();
 
@@ -78,24 +78,27 @@ Deno.serve((request) => handle(request, async () => {
     return json(request, { rows: rows || [], categories: categories || [], certificationTypes: certificationTypes || [] });
   }
 
+  const archivalReason=(value:unknown)=>{assertRole(staff.role,'owner');const reason=requiredText(value,'Archival reason',1000);if(reason.length<10)throw new HttpError(400,'Enter a meaningful archival reason.','VALIDATION_ERROR');return reason;};
   if (action === 'equipment.save') {
     assertRole(staff.role, 'admin');
     if (!body.equipment || typeof body.equipment !== 'object' || Array.isArray(body.equipment)) throw new HttpError(400, 'Equipment details are required.', 'VALIDATION_ERROR');
+    if((body.equipment as Record<string,unknown>).status==='inactive')archivalReason(body.archiveReason);
     const { data, error } = await admin.rpc('admin_save_equipment', { p_actor: staff.userId, p_payload: body.equipment });
     if (error) throw new HttpError(400, error.message, 'EQUIPMENT_SAVE_FAILED');
+    if((body.equipment as Record<string,unknown>).status==='inactive')await writeAudit(admin,staff,'equipment_archived','equipment',data,{reason:text(body.archiveReason,1000)});
     return json(request, { id: data });
   }
 
   if (action === 'people.list') {
     const page = pageValues(body);
-    let query = admin.from('people').select('id,email,full_name,roll_number,phone,category,organization,active,booking_privilege_active,safety_training_status,waiver_status,minor_status,migration_review_required,priority_rank,created_at,certifications(id,status,source_kind,certification_types(display_name)),quiz_attempts(id,passed,score,max_score,source_metadata,quizzes(display_name))', { count: 'exact' });
+    let query = admin.from('people').select('id,email,full_name,roll_number,phone,category,organization,active,booking_privilege_active,safety_training_status,waiver_status,minor_status,migration_review_required,priority_rank,created_at,certifications(id,status,source_kind,certification_types(display_name)),quiz_attempts(id,passed,score,max_score,quizzes(display_name))', { count: 'exact' });
     const search = searchTerm(body.search);
     if (search) query = query.or(`full_name.ilike.%${search}%,email.ilike.%${search}%,roll_number.ilike.%${search}%,organization.ilike.%${search}%`);
     const category = text(body.category, 40);
     if (category) query = query.eq('category', category);
     const reviewOnly = body.reviewOnly === true;
     if (reviewOnly) query = query.eq('migration_review_required', true);
-    const { data, error, count } = await query.order('full_name').range(page.from, page.to);
+    const { data, error, count } = await query.order(['full_name','safety_training_status','booking_privilege_active'].includes(String(body.sortKey))?String(body.sortKey):'full_name',{ascending:body.ascending!==false}).order('id').range(page.from, page.to);
     if (error) throw error;
     return json(request, { rows: data || [], page: page.page, pageSize: page.pageSize, total: count || 0 });
   }
@@ -106,6 +109,7 @@ Deno.serve((request) => handle(request, async () => {
     if (!personValue || typeof personValue !== 'object' || Array.isArray(personValue)) throw new HttpError(400, 'Person details are required.', 'VALIDATION_ERROR');
     const person = personValue as Record<string, unknown>;
     const id = text(person.id, 50);
+    if(person.active===false)archivalReason(body.archiveReason);
     const payload = {
       email: safeEmail(person.email),
       full_name: requiredText(person.fullName, 'Full name', 120),
@@ -125,7 +129,7 @@ Deno.serve((request) => handle(request, async () => {
       ? await admin.from('people').update(payload).eq('id', requireUuid(id, 'Person')).select('id').single()
       : await admin.from('people').insert(payload).select('id').single();
     if (result.error) throw new HttpError(400, result.error.message, 'PERSON_SAVE_FAILED');
-    await writeAudit(admin, staff, 'person_saved', 'people', result.data.id, { created: !id });
+    await writeAudit(admin, staff, 'person_saved', 'people', result.data.id, { created: !id, ...(person.active===false?{archived:true,reason:text(body.archiveReason,1000)}:{}) });
     return json(request, { id: result.data.id });
   }
 
@@ -245,6 +249,22 @@ Deno.serve((request) => handle(request, async () => {
     return json(request, { quizzes: quizzes || [], attempts: attempts || [], certificationTypes: certificationTypes || [] });
   }
 
+  if (action === 'quizzes.review-note') {
+    const id=requireUuid(body.attemptId,'Attempt');const note=requiredText(body.note,'Review note',1000);
+    if(note.length<10)throw new HttpError(400,'Enter a meaningful follow-up note.','VALIDATION_ERROR');
+    const attempt=await admin.from('quiz_attempts').select('id').eq('id',id).single();if(attempt.error)throw attempt.error;
+    await writeAudit(admin,staff,'training_result_reviewed','quiz_attempts',id,{note});return json(request,{ok:true});
+  }
+
+  if (action === 'quizzes.review') {
+    const id=requireUuid(body.attemptId,'Attempt');
+    const [attempt,answers]=await Promise.all([
+      admin.from('quiz_attempts').select('id,attempt_reference,status,score,max_score,pass_mark,passed,submitted_at,trainer_name_snapshot,legacy_source_key,people(full_name),quizzes(display_name)').eq('id',id).single(),
+      admin.from('quiz_attempt_answers').select('was_correct,quiz_questions(prompt,position),quiz_question_options(label)').eq('attempt_id',id)]);
+    if(attempt.error)throw attempt.error;if(answers.error)throw answers.error;
+    return json(request,{...attempt.data,answers:answers.data||[]});
+  }
+
   if (action === 'quizzes.get') {
     assertRole(staff.role, 'admin');
     const quizId = requireUuid(body.quizId, 'Quiz');
@@ -280,8 +300,10 @@ Deno.serve((request) => handle(request, async () => {
     const quizId = requireUuid(body.quizId, 'Quiz');
     const quizValue = body.quiz;
     if (!quizValue || typeof quizValue !== 'object' || Array.isArray(quizValue)) throw new HttpError(400, 'Quiz details are required.', 'VALIDATION_ERROR');
+    if((quizValue as Record<string,unknown>).active===false){const old=await admin.from('quizzes').select('active').eq('id',quizId).single();if(old.error)throw old.error;if(old.data.active)archivalReason(body.archiveReason);}
     const { error } = await admin.rpc('admin_replace_quiz', { p_actor: staff.userId, p_quiz_id: quizId, p_payload: quizValue });
     if (error) throw new HttpError(400, error.message, 'QUIZ_SAVE_FAILED');
+    if(text(body.archiveReason,1000))await writeAudit(admin,staff,'quiz_archived','quizzes',quizId,{reason:text(body.archiveReason,1000)});
     return json(request, { ok: true });
   }
 
@@ -321,6 +343,7 @@ Deno.serve((request) => handle(request, async () => {
     const closureValue = body.closure;
     if (!closureValue || typeof closureValue !== 'object' || Array.isArray(closureValue)) throw new HttpError(400, 'Closure details are required.', 'VALIDATION_ERROR');
     const closure = closureValue as Record<string, unknown>;
+    if(closure.active===false)archivalReason(body.archiveReason);
     const id = text(closure.id, 50);
     const payload = {
       closure_date: requiredText(closure.date, 'Closure date', 10),
@@ -339,11 +362,11 @@ Deno.serve((request) => handle(request, async () => {
   }
 
   if (action === 'schedule.closure-delete') {
-    assertRole(staff.role, 'admin');
+    const reason=archivalReason(body.reason);
     const id = requireUuid(body.closureId, 'Closure');
     const { error } = await admin.from('closures').update({ active: false }).eq('id', id);
     if (error) throw error;
-    await writeAudit(admin, staff, 'closure_deactivated', 'closures', id, {});
+    await writeAudit(admin, staff, 'closure_archived', 'closures', id, {reason});
     return json(request, { ok: true });
   }
 
@@ -364,7 +387,7 @@ Deno.serve((request) => handle(request, async () => {
     if (!Object.hasOwn(ROLE_RANK, role)) throw new HttpError(400, 'Staff role is invalid.', 'VALIDATION_ERROR');
     const { data, error } = await admin.auth.admin.inviteUserByEmail(email, { data: { display_name: displayName }, redirectTo: `${appUrl()}?account=reset` });
     if (error || !data.user) throw new HttpError(400, error?.message || 'Staff invitation failed.', 'STAFF_INVITE_FAILED');
-    const { error: roleError } = await admin.from('staff_roles').upsert({ user_id: data.user.id, display_name: displayName, role, active: true, capabilities: role === 'trainer' ? ['training'] : role === 'viewer' ? [] : null, training_certification_type_ids: ['viewer','trainer'].includes(role) ? [] : null, created_by: staff.userId });
+    const { error: roleError } = await admin.from('staff_roles').upsert({ user_id: data.user.id, display_name: displayName, role, active: true, capabilities: role === 'trainer' ? ['training'] : ['viewer','ambassador'].includes(role) ? [] : null, training_certification_type_ids: ['viewer','trainer','ambassador'].includes(role) ? [] : null, created_by: staff.userId });
     if (roleError) throw roleError;
     await writeAudit(admin, staff, 'staff_invited', 'staff_roles', data.user.id, { role });
     return json(request, { userId: data.user.id }, 201);

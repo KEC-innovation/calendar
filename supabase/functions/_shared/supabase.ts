@@ -1,4 +1,5 @@
-import { createClient, type SupabaseClient } from 'npm:@supabase/supabase-js@2.115.0';
+import { enforceStaffMfa } from './staffMfa.ts';
+import { createClient, type SupabaseClient, type User } from 'npm:@supabase/supabase-js@2.115.0';
 import { HttpError } from './http.ts';
 
 function requiredEnv(name: string, fallback?: string): string {
@@ -26,22 +27,26 @@ export function userClient(request: Request): SupabaseClient {
 
 export async function requireStaff(
   request: Request,
-  minimum: 'viewer' | 'trainer' | 'admin' | 'owner' = 'viewer',
-): Promise<{ userId: string; email: string; displayName: string; role: 'viewer' | 'trainer' | 'admin' | 'owner'; capabilities: string[] | null; trainingCertificationTypeIds: string[] | null }> {
+  minimum: 'viewer' | 'ambassador' | 'trainer' | 'admin' | 'owner' = 'viewer',
+  verifiedUser?: User,
+): Promise<{ userId: string; email: string; displayName: string; role: 'viewer' | 'ambassador' | 'trainer' | 'admin' | 'owner'; capabilities: string[] | null; trainingCertificationTypeIds: string[] | null }> {
   const token = (request.headers.get('authorization') || '').replace(/^Bearer\s+/i, '');
   if (!token) throw new HttpError(401, 'Staff sign-in is required.', 'AUTH_REQUIRED');
   const admin = adminClient();
-  const { data: userData, error: userError } = await admin.auth.getUser(token);
+  const result = verifiedUser ? { data: { user: verifiedUser }, error: null } : await admin.auth.getUser(token);
+  const { data: userData, error: userError } = result;
   if (userError || !userData.user) throw new HttpError(401, 'Staff session is invalid or expired.', 'AUTH_INVALID');
+  if (!userData.user.email_confirmed_at) throw new HttpError(401, 'Confirm your email before staff sign-in.', 'AUTH_REQUIRED');
+  enforceStaffMfa(userData.user, token);
   const { data: roleData, error: roleError } = await admin
     .from('staff_roles')
     .select('role, display_name, active, capabilities, training_certification_type_ids')
     .eq('user_id', userData.user.id)
     .single();
   if (roleError || !roleData?.active) throw new HttpError(403, 'Staff access is inactive.', 'STAFF_INACTIVE');
-  const ranks = { viewer: 10, trainer: 20, admin: 30, owner: 40 } as const;
+  const ranks = { viewer: 10, ambassador: 10, trainer: 20, admin: 30, owner: 40 } as const;
   const role = roleData.role as keyof typeof ranks;
-  if (ranks[role] < ranks[minimum]) throw new HttpError(403, `${minimum[0]?.toUpperCase()}${minimum.slice(1)} role required.`, 'ROLE_REQUIRED');
+  if (!Object.hasOwn(ranks, role) || ranks[role] < ranks[minimum]) throw new HttpError(403, `${minimum[0]?.toUpperCase()}${minimum.slice(1)} role required.`, 'ROLE_REQUIRED');
   return {
     userId: userData.user.id,
     email: userData.user.email || '',

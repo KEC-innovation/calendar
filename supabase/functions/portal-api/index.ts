@@ -14,9 +14,31 @@ Deno.serve(request=>handle(request,async()=>{
    admin.from('equipment').select('id,display_name,status,booking_enabled,max_booking_minutes').neq('status','inactive').order('display_name')]);
   return json(request,{materials:checked(materials),plans:checked(plans),equipment:checked(equipment)});
  }
- const {user,security}=await requireAccount(request,action==='password.change'||action==='account.status');
+ const {user,security}=await requireAccount(request,action==='password.change'||action==='account.status',action==='account.status');
  await consumeRateLimit(admin,request,`portal-${user.id}`,120,600);
  if(action==='account.status') return json(request,{passwordChangeRequired:security?.password_change_required===true,email:user.email});
+ if(action==='account.overview') {
+  const [person,staff]=await Promise.all([
+   admin.from('people').select('id,full_name,phone').eq('email_normalized',user.email!.trim().toLowerCase()).maybeSingle(),
+   admin.from('staff_roles').select('role,display_name,active').eq('user_id',user.id).maybeSingle()]);
+  const record=checked(person);if(record)checked(await admin.rpc('link_person_account',{p_user:user.id}));
+  return json(request,{email:user.email,person:record,staff:checked(staff),profile:user.user_metadata?.registration_profile||null});
+ }
+ if(action==='account.training') {
+  const pid=checked(await admin.rpc('link_person_account',{p_user:user.id}));
+  const [types,requests]=await Promise.all([
+   admin.from('certification_types').select('id,display_name').eq('active',true).order('display_name'),
+   admin.from('training_requests').select('id,status,contact_phone,availability,student_note,scheduled_at,staff_note,created_at,certification_types(display_name)').eq('person_id',pid).eq('user_id',user.id).order('created_at',{ascending:false}).limit(50)]);
+  return json(request,{types:checked(types),requests:checked(requests)});
+ }
+ if(action==='account.request-training')return json(request,{id:checked(await admin.rpc('request_account_training',{p_user:user.id,p_type:requireUuid(body.certificationTypeId,'Equipment training'),p_phone:requiredText(body.phone,'Contact number',40),p_availability:requiredText(body.availability,'Preferred availability',1000),p_note:text(body.note,1000)}))},201);
+ if(action==='account.cancel-training') {checked(await admin.rpc('cancel_account_training_request',{p_user:user.id,p_request:requireUuid(body.requestId,'Request')}));return json(request,{ok:true});}
+ if(action==='account.complete-profile') {
+  const profile=body.profile as Record<string,unknown>;
+  if(!profile||typeof profile!=='object'||Array.isArray(profile))throw new HttpError(400,'Enter your profile details.','VALIDATION_ERROR');
+  const id=checked(await admin.rpc('complete_account_profile',{p_user:user.id,p_name:requiredText(profile.fullName,'Full name',120),p_category:requiredText(profile.category,'Category',40),p_roll:text(profile.rollNumber,80),p_phone:requiredText(profile.phone,'Phone',40),p_organization:text(profile.organization,160)}));
+  return json(request,{id},201);
+ }
  if(action==='password.change') {
   const password=requiredText(body.password,'Password',200);
   if(password.length<12) throw new HttpError(400,'Use at least 12 characters.','WEAK_PASSWORD');
@@ -45,35 +67,45 @@ Deno.serve(request=>handle(request,async()=>{
   checked(await admin.rpc('start_training_session_attempt',{p_user:user.id,p_session_hash:await sha256(requiredText(body.sessionToken,'Training QR',128)),p_attempt_hash:await sha256(token)}));
   return json(request,{attemptToken:token},201);
  }
- const staff=await requireStaff(request);
+ const staff=await requireStaff(request, 'viewer', user);
  const allow=(cap:string)=>{if(!staffCan(staff,cap)) throw new HttpError(403,`Your staff account needs ${cap} permission.`,'PERMISSION_REQUIRED');};
  if(action==='workspace') {
-  const caps=capabilityNames.filter(cap=>staffCan(staff,cap));
-  const data:any={capabilities:caps,people:[],types:[],quizzes:[],sessions:[],manual:[],plans:[],subscriptions:[],materials:[]};
-  if(caps.some(cap=>['access','training','subscriptions'].includes(cap))) {
-   // Search and cap directory responses; never return all people to participants.
+  const caps:string[]=capabilityNames.filter(cap=>staffCan(staff,cap));
+  const data:any={capabilities:caps,people:[],types:[],quizzes:[],sessions:[],manual:[],plans:[],subscriptions:[],materials:[],requests:[]};
+  const task=text(body.task,30);
+  if(task && !caps.includes(task))throw new HttpError(403,'This task is not assigned to your account.','PERMISSION_REQUIRED');
+  const includes=(cap:string)=>caps.includes(cap)&&(!task||task===cap);
+  const work:Array<Promise<void>>=[];
+  const add=(key:string,query:any,transform=(value:any)=>value)=>work.push(Promise.resolve(query).then(result=>{data[key]=transform(checked(result));}));
+  if(['access','training','subscriptions'].some(includes)) {
    const search=text(body.search,100).replace(/[%_,().]/g,'');
-   let query=admin.from('people').select(personFields).order('full_name').limit(200);
-   if(search) query=query.or(`full_name.ilike.%${search}%,email.ilike.%${search}%`);
-   data.people=checked(await query);
-   data.types=checked(await admin.from('certification_types').select('id,display_name').eq('active',true).order('display_name'));
+   let query=admin.from('people').select(personFields).order('full_name').limit(100);
+   if(search)query=query.or(`full_name.ilike.%${search}%,email.ilike.%${search}%`);
+   add('people',query);
+   add('types',admin.from('certification_types').select('id,display_name').eq('active',true).order('display_name'),value=>includes('training')?value.filter((type:any)=>staffCanTrain(staff,type.id)):value);
   }
-  if(caps.includes('training')) {
-   data.types=data.types.filter((type:any)=>staffCanTrain(staff,type.id));
-   data.quizzes=checked(await admin.from('quizzes').select('id,display_name,active,duration_minutes,pass_mark,question_count,quiz_certification_mappings(certification_type_id)').eq('active',true)).map((quiz:any)=>({...quiz,quiz_certification_mappings:quiz.quiz_certification_mappings.filter((mapping:any)=>staffCanTrain(staff,mapping.certification_type_id))})).filter((quiz:any)=>quiz.quiz_certification_mappings.length);
-   let sessionsQuery=admin.from('training_sessions').select('id,expires_at,revoked_at,capacity,trainer_name,quiz_id,certification_type_id,quiz_attempts(id,status,passed)').order('created_at',{ascending:false}).limit(40);
-   if(!['owner','admin'].includes(staff.role)) sessionsQuery=sessionsQuery.eq('trainer_user_id',staff.userId);
-   data.sessions=checked(await sessionsQuery);
-   let manualQuery=admin.from('manual_training_records').select('id,trained_on,trainer_name,outcome,evidence,people(full_name),certification_types(display_name)').order('created_at',{ascending:false}).limit(40);
-   if(!['owner','admin'].includes(staff.role)) manualQuery=manualQuery.eq('recorded_by',staff.userId);
-   data.manual=checked(await manualQuery);
+  if(includes('training')) {
+   add('quizzes',admin.from('quizzes').select('id,display_name,active,duration_minutes,pass_mark,question_count,quiz_certification_mappings(certification_type_id)').eq('active',true),value=>value.map((quiz:any)=>({...quiz,quiz_certification_mappings:quiz.quiz_certification_mappings.filter((mapping:any)=>staffCanTrain(staff,mapping.certification_type_id))})).filter((quiz:any)=>quiz.quiz_certification_mappings.length));
+   let sessionsQuery=admin.from('training_sessions').select('id,expires_at,revoked_at,capacity,trainer_name,quiz_id,certification_type_id,quiz_attempts(id,status,passed)').order('created_at',{ascending:false}).limit(30);
+   let manualQuery=admin.from('manual_training_records').select('id,trained_on,trainer_name,outcome,evidence,people(full_name),certification_types(display_name)').order('created_at',{ascending:false}).limit(30);
+   if(!['owner','admin'].includes(staff.role)){sessionsQuery=sessionsQuery.eq('trainer_user_id',staff.userId);manualQuery=manualQuery.eq('recorded_by',staff.userId);}
+   add('sessions',sessionsQuery);add('manual',manualQuery);
+   if(['owner','admin'].includes(staff.role)||staff.trainingCertificationTypeIds===null||staff.trainingCertificationTypeIds?.length){
+    let requests=admin.from('training_requests').select('id,status,contact_phone,availability,student_note,scheduled_at,staff_note,created_at,people(full_name,email),certification_types(display_name)').in('status',['pending','scheduled']).order('created_at').limit(100);
+    if(!['owner','admin'].includes(staff.role)&&staff.trainingCertificationTypeIds!==null)requests=requests.in('certification_type_id',staff.trainingCertificationTypeIds);
+    add('requests',requests);
+   }
   }
-  if(caps.includes('subscriptions')) {
-   data.plans=checked(await admin.from('subscription_plans').select('*').eq('active',true).order('name'));
-   data.subscriptions=checked(await admin.from('client_subscriptions').select('*,people(full_name,email),subscription_plans(name),subscription_payments(amount_npr,paid_on,receipt_reference)').order('created_at',{ascending:false}).limit(200));
+  if(includes('subscriptions')) {
+   add('plans',admin.from('subscription_plans').select('*').eq('active',true).order('name'));
+   add('subscriptions',admin.from('client_subscriptions').select('*,people(full_name,email),subscription_plans(name),subscription_payments(amount_npr,paid_on,receipt_reference)').order('created_at',{ascending:false}).limit(100));
   }
-  if(caps.includes('catalog')) data.materials=checked(await admin.from('material_catalog').select('*').order('name'));
+  if(includes('catalog'))add('materials',admin.from('material_catalog').select('*').order('name'));
+  await Promise.all(work);
   return json(request,data);
+ }
+ if(action==='training.request-update') {
+  allow('training');checked(await admin.rpc('update_training_request',{p_actor:staff.userId,p_request:requireUuid(body.requestId,'Request'),p_status:requiredText(body.status,'Request state',20),p_scheduled:text(body.scheduledAt,50)||null,p_note:requiredText(body.note,'Session instructions / staff note',1000)}));return json(request,{ok:true});
  }
  if(action==='training.open') {
   allow('training');
@@ -116,24 +148,10 @@ Deno.serve(request=>handle(request,async()=>{
   allow('access');await consumeRateLimit(admin,request,`account-invite-${staff.userId}`,10,3600);
   const person=checked(await admin.from('people').select('id,email,full_name').eq('id',requireUuid(body.personId,'Person')).single());
   const email=safeEmail(person.email);const redirect=`${appUrl()}?account=reset`;
-  if(body.mode==='temporary') {
-   const key=Deno.env.get('BREVO_API_KEY'),sender=Deno.env.get('MAIL_FROM');
-   if(!key||!sender) throw new HttpError(503,'Configure Brevo API key and verified MAIL_FROM first.','EMAIL_SETUP_REQUIRED');
-   const password=randomToken(24)+'aA7!';
-   // Only NEW accounts. Never overwrite an existing user's password.
-   const created=await admin.auth.admin.createUser({email,password,email_confirm:true,user_metadata:{display_name:person.full_name}});
-   if(created.error||!created.data.user) throw new HttpError(400,'Could not create a new account. If it already exists, use password recovery.','ACCOUNT_CREATE_FAILED');
-   const uid=created.data.user.id;
-   try {
-    checked(await admin.from('account_security').insert({user_id:uid,password_change_required:true,temporary_expires_at:null}));
-    const sent=await fetch('https://api.brevo.com/v3/smtp/email',{method:'POST',headers:{'api-key':key,'Content-Type':'application/json'},body:JSON.stringify({sender:{name:'KEC Makerspace',email:sender},to:[{email}],subject:'Your KEC Makerspace account',textContent:`Your temporary password is: ${password}\nSign in at ${appUrl()}#/account and set your own password before booking or training. Use Forgot password if you need a new setup link.\nYour existing equipment passes stay on your Makerspace record.`})});
-    if(!sent.ok) throw new Error('Email provider rejected the message.');
-   } catch(cause) { await admin.auth.admin.deleteUser(uid); throw new HttpError(502,'Account invitation could not be sent; no usable new account was left behind. Check the email provider and retry.','EMAIL_FAILED'); }
-  } else {
-   const invited=await admin.auth.admin.inviteUserByEmail(email,{redirectTo:redirect});
-   if(invited.error) throw new HttpError(400,'Invitation failed. If the account exists, use Forgot password; otherwise check SMTP configuration.','INVITE_FAILED');
-  }
-  await writeAudit(admin,staff,'account_invitation_sent','people',person.id,{mode:body.mode==='temporary'?'temporary_password':'setup_link'});
+  if(body.mode==='temporary')throw new HttpError(400,'Use an email setup link. Temporary passwords are no longer sent by email.','SECURE_INVITATION_REQUIRED');
+  const invited=await admin.auth.admin.inviteUserByEmail(email,{redirectTo:redirect});
+  if(invited.error)throw new HttpError(400,'Invitation failed. If the account exists, use Forgot password; otherwise check SMTP configuration.','INVITE_FAILED');
+  await writeAudit(admin,staff,'account_invitation_sent','people',person.id,{mode:'setup_link'});
   return json(request,{ok:true});
  }
  if(action==='subscriptions.add') {
@@ -155,10 +173,16 @@ Deno.serve(request=>handle(request,async()=>{
   checked(await admin.from('client_subscriptions').update({status:'cancelled',note:reason}).eq('id',id).select('id').single());
   await writeAudit(admin,staff,'subscription_cancelled','client_subscriptions',id,{reason});return json(request,{ok:true});
  }
+ if(action==='catalog.archive') {
+  if(staff.role!=='owner')throw new HttpError(403,'Only an Owner can archive catalog items.','PERMISSION_REQUIRED');
+  const reason=requiredText(body.reason,'Archival reason',1000);if(reason.length<10)throw new HttpError(400,'Enter a meaningful archival reason.','VALIDATION_ERROR');
+  const id=requireUuid(body.id,'Item');checked(await admin.from('material_catalog').update({active:false,updated_at:new Date().toISOString()}).eq('id',id).select('id').single());
+  await writeAudit(admin,staff,'material_catalog_archived','material_catalog',id,{reason});return json(request,{ok:true});
+ }
  if(action==='catalog.save') {
-  allow('catalog');const payload={name:requiredText(body.name,'Name',120),kind:requiredText(body.kind,'Kind',20),unit:requiredText(body.unit,'Unit',40),stock_quantity:Number(body.stock),market_price_npr:Number(body.price),description:text(body.description,1000),active:body.active!==false,updated_at:new Date().toISOString()};
+  allow('catalog');if(body.active===false){if(staff.role!=='owner')throw new HttpError(403,'Only an Owner can edit archived catalog items.','PERMISSION_REQUIRED');const prior=checked(await admin.from('material_catalog').select('active').eq('id',requireUuid(body.id,'Item')).single());if(prior.active&&requiredText(body.archiveReason,'Archival reason',1000).length<10)throw new HttpError(400,'Enter a meaningful archival reason.','VALIDATION_ERROR');}const payload={name:requiredText(body.name,'Name',120),kind:requiredText(body.kind,'Kind',20),unit:requiredText(body.unit,'Unit',40),stock_quantity:Number(body.stock),market_price_npr:Number(body.price),description:text(body.description,1000),active:body.active!==false,updated_at:new Date().toISOString()};
   const id=text(body.id,50);const result=checked(id?await admin.from('material_catalog').update(payload).eq('id',requireUuid(id,'Item')).select('id').single():await admin.from('material_catalog').insert(payload).select('id').single());
-  await writeAudit(admin,staff,'material_catalog_updated','material_catalog',result.id,{});return json(request,result);
+  await writeAudit(admin,staff,'material_catalog_updated','material_catalog',result.id,body.active===false?{archived:true,reason:text(body.archiveReason,1000)}:{});return json(request,result);
  }
  if(action==='staff.capabilities') {
   if(staff.role!=='owner') throw new HttpError(403,'Owner permission required.','PERMISSION_REQUIRED');

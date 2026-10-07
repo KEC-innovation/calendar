@@ -24,7 +24,7 @@ function SetupRequired() {
 function RoutedApp() {
   const route = useHashRoute();
   const staffRoute = route.path.startsWith('/staff');
-  const studentRoute = !staffRoute && !['/policies', '/catalog', '/booking/manage'].includes(route.path) && !route.path.startsWith('/quiz/');
+  const studentRoute = route.path === '/book' || route.path.startsWith('/training/');
   const [session, setSession] = useState<StaffSession | null>(null);
   const [authReady, setAuthReady] = useState(false);
 
@@ -48,7 +48,10 @@ function RoutedApp() {
   if (configurationMissing()) return <SetupRequired />;
   if (route.path === '/policies') return <Policies />;
   if (route.path === '/catalog') return <Catalog />;
-  if (route.path === '/password' || new URLSearchParams(window.location.search).get('account') === 'reset') return <Account forcePassword><StudentPortal /></Account>;
+  if (route.path === '/' && new URLSearchParams(window.location.search).get('account') !== 'confirm' && new URLSearchParams(window.location.search).get('account') !== 'reset') return <Home />;
+  if (route.path === '/register') return <Account initialMode="signup"><AccountOverview /></Account>;
+  if (route.path === '/account' || (route.path==='/' && new URLSearchParams(window.location.search).get('account')==='confirm')) return <Account><AccountOverview /></Account>;
+  if (route.path === '/password' || new URLSearchParams(window.location.search).get('account') === 'reset') return <Account forcePassword><AccountOverview /></Account>;
   if (route.path.startsWith('/training/')) {
     sessionStorage.setItem('kec-next-route',route.path);
     return <Account><StudentPortal trainingToken={decodeURIComponent(route.path.slice('/training/'.length))} /></Account>;
@@ -58,11 +61,13 @@ function RoutedApp() {
   if (route.path.startsWith('/staff')) {
     if (!authReady) return <main className="center-screen"><Spinner label="Checking staff session" /></main>;
     if (!session) return <StaffLogin onSignedIn={(value) => { setSession(value); navigate('/staff/dashboard'); }} />;
-    return <AdminApp session={session} section={route.path.slice('/staff/'.length) || 'dashboard'} onSignedOut={() => setSession(null)} />;
+    return <Account staffMode><AdminApp session={session} section={route.path.slice('/staff/'.length) || 'dashboard'} onSignedOut={() => setSession(null)} /></Account>;
   }
   return <Account><StudentPortal /></Account>;
 }
 
+const Home = lazy(() => import('../features/portal/Home').then(module => ({ default: module.Home })));
+const AccountOverview = lazy(() => import('../features/portal/AccountOverview').then(module => ({ default: module.AccountOverview })));
 const Account = lazy(() => import('../features/portal/Account').then(module => ({ default: module.Account })));
 
 const loadStudentPortal = () => import('../features/portal/StudentPortal');

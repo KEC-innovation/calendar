@@ -1,3 +1,4 @@
+import { workspaceCache } from './workspaceCache';
 import { getSupabase, isMockMode } from './supabase';
 import type {
   AvailabilityResult,
@@ -73,6 +74,7 @@ export const api = {
     return invoke('quiz-api', { action: 'start', ...payload }, accessToken);
   },
   admin<T>(session: StaffSession, action: string, payload: JsonObject = {}): Promise<T> {
+    if (!['dashboard','equipment.list','people.list','certifications.list','bookings.list','quizzes.list','quizzes.get','quizzes.review','schedule.get','staff.list','audit.list'].includes(action)) workspaceCache.invalidate();
     return invoke('admin-api', { action, ...payload }, session.accessToken);
   },
 };

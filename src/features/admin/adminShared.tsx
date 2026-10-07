@@ -1,5 +1,6 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { AlertTriangle, RefreshCw } from 'lucide-react';
+import { workspaceCache } from '../../lib/workspaceCache';
 import { api } from '../../lib/api';
 import { Spinner } from '../../components/Spinner';
 import type { JsonObject, PersonCategory, StaffRole, StaffSession } from '../../types/domain';
@@ -7,7 +8,7 @@ import type { JsonObject, PersonCategory, StaffRole, StaffSession } from '../../
 export type Notify = (message: { type: 'success' | 'error' | 'info'; text: string }) => void;
 export interface AdminProps { session: StaffSession; notify: Notify }
 
-export const ROLE_RANK: Record<StaffRole, number> = { viewer: 10, trainer: 20, admin: 30, owner: 40 };
+export const ROLE_RANK: Record<StaffRole, number> = { viewer: 10, ambassador: 10, trainer: 20, admin: 30, owner: 40 };
 export const CATEGORY_LABELS: Record<PersonCategory, string> = {
   kec_student: 'KEC student',
   kec_staff: 'KEC staff',
@@ -66,20 +67,24 @@ export function LoadError({ message, retry }: { message: string; retry: () => vo
 export interface AdminDataState<T> { data: T | null; loading: boolean; error: string; reload: () => void }
 
 export function useAdminData<T>(session: StaffSession, action: string, payload: JsonObject = {}): AdminDataState<T> {
-  const [data, setData] = useState<T | null>(null);
+  const cacheKey = `${session.userId}:${session.accessToken}:${action}:${JSON.stringify(payload)}`;
+  const lastKey=useRef(cacheKey);
+  const [data, setData] = useState<T | null>(() => workspaceCache.peek<T>(cacheKey));
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [revision, setRevision] = useState(0);
   const payloadKey = JSON.stringify(payload);
   useEffect(() => {
     let active = true;
-    setLoading(true);
+    const cached = workspaceCache.peek<T>(cacheKey);
+    if(cached)setData(cached);else if(lastKey.current!==cacheKey)setData(null);
+    lastKey.current=cacheKey;setLoading(!cached);
     setError('');
-    void api.admin<T>(session, action, JSON.parse(payloadKey) as JsonObject)
+    void workspaceCache.get<T>(cacheKey, () => api.admin<T>(session, action, JSON.parse(payloadKey) as JsonObject))
       .then((value) => active && setData(value))
       .catch((cause: unknown) => active && setError(cause instanceof Error ? cause.message : 'The workspace could not be loaded.'))
       .finally(() => active && setLoading(false));
     return () => { active = false; };
-  }, [action, payloadKey, revision, session]);
-  return { data, loading, error, reload: () => setRevision((value) => value + 1) };
+  }, [action, cacheKey, payloadKey, revision, session]);
+  return { data, loading, error, reload: () => { workspaceCache.invalidate(); setRevision((value) => value + 1); } };
 }

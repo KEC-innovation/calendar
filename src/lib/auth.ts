@@ -1,3 +1,4 @@
+import { workspaceCache } from './workspaceCache';
 import { getSupabase, isMockMode } from './supabase';
 import type { StaffSession } from '../types/domain';
 
@@ -66,6 +67,7 @@ export async function signInDemo(): Promise<StaffSession> {
 }
 
 export async function signOut(): Promise<void> {
+  workspaceCache.clear();
   if (isMockMode()) {
     sessionStorage.removeItem('kec-mock-session');
     return;

@@ -77,3 +77,10 @@ export function selectedRangeIssue(data: AvailabilityResult, start: string, end:
   if (data.busy.some(overlaps)) return 'This time overlaps a reservation. Choose a free block or adjust your times.';
   return null;
 }
+
+export function chooseInterval(data:AvailabilityResult,anchor:{startsAt:string;endsAt:string},clicked:{startsAt:string;endsAt:string},maxMinutes:number,now=new Date()):{start:string;end:string;issue:string|null}{
+ const from=Math.min(new Date(anchor.startsAt).getTime(),new Date(clicked.startsAt).getTime());
+ const to=Math.max(new Date(anchor.endsAt).getTime(),new Date(clicked.endsAt).getTime());
+ const start=nepalInputValue(new Date(from)),end=nepalInputValue(new Date(to));
+ return {start,end,issue:selectedRangeIssue(data,start,end,maxMinutes,now)};
+}

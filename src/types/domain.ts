@@ -6,7 +6,7 @@ export type PersonCategory =
   | 'member_non_kec'
   | 'outreach_minor';
 
-export type StaffRole = 'owner' | 'admin' | 'trainer' | 'viewer';
+export type StaffRole = 'owner' | 'admin' | 'trainer' | 'viewer' | 'ambassador';
 export type EquipmentStatus = 'active' | 'out_of_service' | 'inactive';
 export type ComplianceStatus = 'unknown' | 'pending' | 'verified' | 'revoked';
 export type MinorStatus = 'unknown' | 'adult' | 'minor';

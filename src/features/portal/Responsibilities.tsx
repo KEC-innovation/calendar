@@ -55,10 +55,10 @@ function AssignmentEditor({ staff, types, onSaved }: { staff: ResponsibilityStaf
 }
 export function Responsibilities({ staff, types, onSaved }: { staff: ResponsibilityStaff[]; types: TrainingType[]; onSaved: () => void }) {
   const [userId, setUserId] = useState('');
-  const selected = staff.find(row => row.user_id === userId && ['viewer', 'trainer'].includes(row.role));
-  return <section className="panel"><h2>Assign focused responsibilities</h2>
-    <p>Owner manages staff access. Admin keeps all operational controls. Focused staff and trainers receive only their assigned tasks; training can be limited to specific equipment certification types.</p>
-    <label className="field">Staff member<select aria-label="Staff member" value={userId} onChange={event => setUserId(event.target.value)}><option value="">Choose focused staff member</option>{staff.filter(row => ['viewer', 'trainer'].includes(row.role)).map(row => <option key={row.user_id} value={row.user_id}>{row.display_name}{row.active === false ? ' (inactive)' : ''} · current tasks: {(row.capabilities ?? (row.role === 'trainer' ? ['training'] : [])).join(', ') || 'none'}</option>)}</select></label>
+  const selected = staff.find(row => row.user_id === userId && ['viewer', 'trainer', 'ambassador'].includes(row.role));
+  return <section className="panel"><h2>Assign staff responsibilities</h2>
+    <p>Owner manages staff access. Admin keeps all operational controls. Staff and trainers receive only their assigned tasks; training can be limited to specific equipment certification types.</p>
+    <label className="field">Staff member<select aria-label="Staff member" value={userId} onChange={event => setUserId(event.target.value)}><option value="">Choose a staff member</option>{staff.filter(row => ['viewer', 'trainer', 'ambassador'].includes(row.role)).map(row => <option key={row.user_id} value={row.user_id}>{row.display_name}{row.active === false ? ' (inactive)' : ''} · current tasks: {(row.capabilities ?? (row.role === 'trainer' ? ['training'] : [])).join(', ') || 'none'}</option>)}</select></label>
     {selected && <AssignmentEditor key={`${selected.user_id}-${selected.updated_at ?? ''}`} staff={selected} types={types} onSaved={onSaved} />}
   </section>;
 }
