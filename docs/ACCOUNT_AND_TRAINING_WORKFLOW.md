@@ -36,7 +36,7 @@ Only Owner can archive records. Permanent deletion is blocked to retain business
 
 ## Account security and email setup
 
-Staff must set up an authenticator before opening the workspace. A verified code is required on later password sign-ins. My account -> Two-step sign-in manages the authenticator. Owner changes and all staff APIs still check active role, duties and equipment scope on each request. Client caches do not grant authority.
+Staff currently sign in with confirmed email and their own password. Mandatory authenticator setup and code checks are temporarily removed by request while email OTP is deferred. Existing authenticator factors are retained but are not enforced by the app. Owner changes and all staff APIs still check active role, duties and equipment scope on each request. Client caches do not grant authority.
 
 In Supabase Authentication settings:
 
@@ -47,7 +47,7 @@ In Supabase Authentication settings:
 - Configure your existing verified SMTP provider for production delivery. SMTP credentials remain in Supabase settings, never in Vite variables or Git. Use your provider's TLS settings and verified sender/domain, with SPF/DKIM/DMARC as applicable.
 - In Email Templates, paste `docs/auth-email-templates/confirmation.html`, `invite.html`, and `recovery.html` into Confirm signup, Invite user and Reset password. Keep `{{ .ConfirmationURL }}` exactly as written: Supabase creates and validates the token. Suggested subjects: Confirm your KEC Makerspace email; Set up your KEC Makerspace account; Reset your KEC Makerspace password.
 - Disable email click tracking/link rewriting for authentication messages. Test a real confirmation, invite and recovery on a test account after saving settings. Hosted Auth, SMTP delivery and authenticator scanning cannot be validated by local synthetic tests.
-- Lost staff authenticators require recovery through a trusted Supabase project administrator. Password reset alone does not bypass MFA. Restore/reset the lost factor in Supabase Auth, then enroll a replacement through My account.
+- Existing authenticator factors remain stored; this release neither deletes them nor offers new enrollment. The app does not require their codes during the interim password-only phase.
 
 Optional bot protection needs a real CAPTCHA integration and keys. Do not turn on Supabase CAPTCHA until the corresponding client widget/token support is installed, because that would block current forms. Built-in Auth rate limits remain active. This patch does not configure external service credentials or send messages.
 
@@ -72,7 +72,7 @@ Responsibilities load only the selected task. Independent queries run together, 
 
 ## Deferred email phase
 
-The compact entry-screen release keeps the already-deployed password/authenticator staff sign-in. It does not enable email-code sign-in, change the database authentication policy, or change staff assignments. Existing Admins and Owners do not register again; new staff accept an Owner invitation once.
+The compact entry screens remain. The interim password release removes mandatory authenticator checks in the client, shared APIs and a new database migration. It does not enable email-code sign-in or change staff assignments. Existing Admins and Owners do not register again; new staff accept an Owner invitation once.
 
 Production email delivery and branded templates are deferred. This hosted Free project uses Supabase's built-in sender and its email-template editor is locked. Customizing the templates requires a configured SMTP provider or an eligible paid plan. The built-in sender is restricted to project-team addresses, so ordinary student confirmation/invitation/recovery delivery is not production-ready until email setup is completed. Do not disable email confirmation to work around delivery.
 

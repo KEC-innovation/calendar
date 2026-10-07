@@ -1,12 +1,10 @@
-import { enforceStaffMfa } from './staffMfa.ts';
 import { adminClient } from './supabase.ts';
 import { HttpError } from './http.ts';
-export async function requireAccount(request: Request, allowPasswordChange = false, allowBaseSession = false) {
+export async function requireAccount(request: Request, allowPasswordChange = false) {
  const admin=adminClient();
  const token=(request.headers.get('authorization')||'').replace(/^Bearer\s+/i,'');
  const {data,error}=await admin.auth.getUser(token);
  if(error||!data.user||!data.user.email_confirmed_at) throw new HttpError(401,'Sign in with a confirmed email address.','AUTH_REQUIRED');
- if(!allowBaseSession&&data.user.factors?.some(factor=>factor.status==='verified'))enforceStaffMfa(data.user,token);
  const {data:security,error:securityError}=await admin.from('account_security').select('*').eq('user_id',data.user.id).maybeSingle();
  if(securityError) throw securityError;
  if(security?.password_change_required && !allowPasswordChange) throw new HttpError(403,'Set your own password in Account before continuing.','PASSWORD_CHANGE_REQUIRED');

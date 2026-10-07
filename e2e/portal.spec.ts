@@ -14,7 +14,7 @@ async function fixture(page:Page,role:'student'|'trainer'|'admin'|'owner'|'ambas
  const factor={id:'synthetic-factor',factor_type:'totp',status:'verified',friendly_name:'KEC phone'};
  let authUser={...user,factors:role==='student'||options.enroll?[]:[factor]};
  const token=(aal:string)=>[{alg:'HS256',typ:'JWT'},{sub:userId,role:'authenticated',exp:2200000000,aal},'synthetic-signature'].map(v=>Buffer.from(typeof v==='string'?v:JSON.stringify(v)).toString('base64url')).join('.');
- let authToken=role==='student'?jwt:token(options.mfa||options.enroll?'aal1':'aal2');
+ let authToken=role==='student'?jwt:token('aal1');
  const staffRows=[{user_id:userId,display_name:'Owner Staff',role:'owner',active:true,created_at:'2026-01-01T00:00:00Z',updated_at:'2026-01-01T00:00:00Z',capabilities:null,training_certification_type_ids:null},{user_id:secondMachineId,display_name:'Focused Trainer',role:'trainer',active:true,created_at:'2026-01-01T00:00:00Z',updated_at:'2026-01-01T00:00:00Z',capabilities:['training','catalog'],training_certification_type_ids:[typeId]}];
  await page.route('https://kec-test.supabase.co/**',async route=>{
   const url=new URL(route.request().url());const body=(route.request().postDataJSON()||{}) as Record<string,unknown>;
@@ -266,13 +266,20 @@ test('returning to responsibilities uses a private short-lived cache',async({pag
  const requests=await fixture(page,'trainer',{workspaceDelayMs:350});await login(page,'/#/staff/login');await expect(page.getByRole('button',{name:'Create training QR'})).toBeVisible();await page.goto('/#/');await expect(page.getByRole('link',{name:'Register',exact:true})).toBeVisible();await page.goto('/#/staff/operations');await expect(page.getByRole('button',{name:'Create training QR'})).toBeVisible();expect(requests.filter(r=>r.action==='workspace')).toHaveLength(1);
 });
 
-test('staff must verify an authenticator before operational requests are sent',async({page})=>{
- const requests=await fixture(page,'owner',{mfa:true});await login(page,'/#/staff/login');await expect(page.getByRole('heading',{name:'Verify your sign in'})).toBeVisible();expect(requests.some(r=>r.action==='dashboard')).toBe(false);await page.getByLabel('Authenticator code',{exact:true}).fill('000000');await page.getByRole('button',{name:'Verify sign in',exact:true}).click();await expect(page.getByRole('alert')).toContainText('Invalid authenticator code');expect(requests.some(r=>r.action==='dashboard')).toBe(false);await page.getByLabel('Authenticator code',{exact:true}).fill('123456');await page.getByRole('button',{name:'Verify sign in',exact:true}).click();await expect(page.getByRole('heading',{name:/Good day/})).toBeVisible();
+test('password-only staff with an existing authenticator can open operations',async({page})=>{
+ const requests=await fixture(page,'owner',{mfa:true});await login(page,'/#/staff/login');
+ await expect(page.getByRole('heading',{name:/Good day/})).toBeVisible();
+ expect(requests.some(r=>r.action==='dashboard')).toBe(true);
+ await expect(page.getByRole('heading',{name:'Verify your sign in'})).toHaveCount(0);
+ await page.screenshot({path:test.info().outputPath('password-owner-dashboard.png'),fullPage:true});await openStaffLink(page,'My account & security');await expect(page.getByRole('heading',{name:'Owner Staff',exact:true})).toBeVisible();
+ await expect(page.getByRole('heading',{name:'Two-step sign-in'})).toHaveCount(0);
 });
-test('unenrolled staff can set up an authenticator before entering the workspace',async({page})=>{
- const requests=await fixture(page,'owner',{enroll:true});await login(page,'/#/staff/login');await expect(page.getByRole('heading',{name:'Secure your staff account'})).toBeVisible();expect(requests.some(r=>r.action==='dashboard')).toBe(false);await page.getByRole('button',{name:'Set up authenticator',exact:true}).click();await expect(page.getByAltText('Authenticator setup QR')).toBeVisible();await page.getByLabel('Authenticator code',{exact:true}).fill('123456');await page.getByRole('button',{name:'Enable two-step sign-in',exact:true}).click();await expect(page.getByRole('heading',{name:/Good day/})).toBeVisible();
+test('unenrolled password-only staff opens the dashboard without setup',async({page})=>{
+ const requests=await fixture(page,'owner',{enroll:true});await login(page,'/#/staff/login');
+ await expect(page.getByRole('heading',{name:/Good day/})).toBeVisible();
+ expect(requests.some(r=>r.action==='dashboard')).toBe(true);
+ await expect(page.getByRole('button',{name:'Set up authenticator',exact:true})).toHaveCount(0);
 });
-
 test('registered students can request training with contact and availability',async({page})=>{
  const requests=await fixture(page);await login(page,'/#/account');await page.getByRole('combobox',{name:'Equipment training',exact:true}).selectOption(typeId);await page.getByLabel('Contact number',{exact:true}).fill('9800000000');await page.getByLabel('Preferred days and times',{exact:true}).fill('Monday or Wednesday after 2 pm');await page.getByRole('button',{name:'Send training request'}).click();await expect(page.getByText('Training requested.',{exact:false})).toBeVisible();await expect(page.getByRole('button',{name:'Cancel training request'})).toBeVisible();const sent=requests.find(r=>r.action==='account.request-training');expect(sent?.phone).toBe('9800000000');expect(sent?.userId).toBeUndefined();await expect(page.getByRole('link',{name:'Ask the Makerspace help desk'})).toBeVisible();await page.getByRole('button',{name:'Cancel training request'}).click();await expect(page.getByText('Training request cancelled.',{exact:false})).toBeVisible();expect(await page.evaluate(()=>document.documentElement.scrollWidth<=window.innerWidth)).toBe(true);await page.screenshot({path:test.info().outputPath('student-training-request.png'),fullPage:true});
 });

@@ -14,7 +14,7 @@ Deno.serve(request=>handle(request,async()=>{
    admin.from('equipment').select('id,display_name,status,booking_enabled,max_booking_minutes').neq('status','inactive').order('display_name')]);
   return json(request,{materials:checked(materials),plans:checked(plans),equipment:checked(equipment)});
  }
- const {user,security}=await requireAccount(request,action==='password.change'||action==='account.status',action==='account.status');
+ const {user,security}=await requireAccount(request,action==='password.change'||action==='account.status');
  await consumeRateLimit(admin,request,`portal-${user.id}`,120,600);
  if(action==='account.status') return json(request,{passwordChangeRequired:security?.password_change_required===true,email:user.email});
  if(action==='account.overview') {

@@ -1,4 +1,3 @@
-import { enforceStaffMfa } from './staffMfa.ts';
 import { createClient, type SupabaseClient, type User } from 'npm:@supabase/supabase-js@2.115.0';
 import { HttpError } from './http.ts';
 
@@ -37,7 +36,6 @@ export async function requireStaff(
   const { data: userData, error: userError } = result;
   if (userError || !userData.user) throw new HttpError(401, 'Staff session is invalid or expired.', 'AUTH_INVALID');
   if (!userData.user.email_confirmed_at) throw new HttpError(401, 'Confirm your email before staff sign-in.', 'AUTH_REQUIRED');
-  enforceStaffMfa(userData.user, token);
   const { data: roleData, error: roleError } = await admin
     .from('staff_roles')
     .select('role, display_name, active, capabilities, training_certification_type_ids')

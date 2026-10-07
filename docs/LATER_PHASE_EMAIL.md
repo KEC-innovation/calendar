@@ -2,7 +2,7 @@
 
 Status: deferred by request on 7 October 2026. One reminder is scheduled for 14 October 2026, 12:08 pm Nepal time.
 
-Current release: compact Home, aligned registration and password sign-in screens, optional collapsed personal booking profile for staff. Current deployed database/API sign-in policy is retained.
+Current release: compact Home, aligned registration and password sign-in screens, optional collapsed personal booking profile for staff. Staff temporarily use password-only sign-in, selected on 7 October 2026. Mandatory authenticator checks are removed by the interim password patch; existing factors remain stored. Email OTP is still deferred.
 
 Before enabling email codes:
 

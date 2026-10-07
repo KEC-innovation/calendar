@@ -51,7 +51,7 @@ This permission update does not change opening hours, the existing approved eigh
 
 The stored `viewer` role is now labeled **Staff**. **MS Ambassador** is a distinct `ambassador` role; new invitations start with no operational duties and no equipment training scope. Filament/electronics request approvals and checkout remain in the separate Google Apps Script system until integration. Owner can explicitly assign existing duties to a qualified ambassador with a review note. An ambassador appointment does not itself grant training authority.
 
-All staff workspace access requires verified email, a personal password and authenticator verification (AAL2). New staff accounts see authenticator setup before the workspace. Direct staff RPCs enforce AAL2 too. Personal records and equipment use remain separate from administrative login.
+Staff workspace access currently requires verified email, a personal password and an active assigned staff role. On 7 October 2026, the operator selected temporary password-only access while email OTP is deferred. Mandatory authenticator setup and AAL2 checks are removed consistently from the app, APIs and staff RPC role lookup. Existing factors are retained, but their codes are not required during this phase. Personal records and equipment use remain separate from administrative login.
 
 Owner controls archival of people, equipment, published catalog items, closures and active quiz banks. A meaningful reason is required. Permanent deletion of business records is blocked, including for Owner, to preserve evidence. Operational cancellations, certification suspension/revocation, quiz bank revisions and QR closure retain their history and remain assigned operational duties. Audit history stays immutable.
 
@@ -59,4 +59,4 @@ Registration creates a personal record only after email confirmation and profile
 
 Participants request equipment training with a phone number and availability in My account. Assigned trainers see only requests inside their equipment scope; Admin and Owner see all types. Staff can post a future session time and instructions, complete an attended appointment or cancel a request with a note. Completing the request never issues a certificate: use the existing supervised quiz or documented manual assessment. Minors use supervised outreach through the help desk.
 
-Email-code sign-in and custom email delivery are deferred to the production-email phase. This layout release retains the deployed password/authenticator requirements and adds no roles or permissions.
+Email-code sign-in and custom email delivery are deferred to the production-email phase. The interim password release changes the authentication requirement only; it adds no roles or permissions. Apply the new migration and deploy admin-api, portal-api and quiz-api before publishing the frontend.
