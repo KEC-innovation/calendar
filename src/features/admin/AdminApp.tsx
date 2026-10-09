@@ -10,10 +10,10 @@ import { Toast, type ToastMessage } from '../../components/Toast';
 import { signOut } from '../../lib/auth';
 import { navigate } from '../../lib/hashRouter';
 import type { StaffRole, StaffSession } from '../../types/domain';
-import { AuditPanel, BookingsPanel, CertificationsPanel, DashboardPanel, EquipmentPanel, PeoplePanel, SchedulePanel, StaffPanel, TrainingPanel } from './AdminSections';
+import { AuditPanel, BookingsPanel, CertificationsPanel, DashboardPanel, EquipmentPanel, PeoplePanel, SchedulePanel, StaffPanel, TrainingPanel, TrainingRequestsPanel } from './AdminSections';
 import { can, pretty } from './adminShared';
 
-type AdminSection = 'operations' | 'dashboard' | 'equipment' | 'people' | 'certifications' | 'bookings' | 'training' | 'schedule' | 'staff' | 'audit';
+type AdminSection = 'operations' | 'dashboard' | 'equipment' | 'people' | 'certifications' | 'bookings' | 'training' | 'training-requests' | 'schedule' | 'staff' | 'audit';
 
 const NAV: Array<{ section: AdminSection; label: string; icon: typeof LayoutDashboard; minimum: StaffRole }> = [
   { section: 'operations', label: 'My responsibilities', icon: ClipboardCheck, minimum: 'viewer' },
@@ -22,6 +22,7 @@ const NAV: Array<{ section: AdminSection; label: string; icon: typeof LayoutDash
   { section: 'people', label: 'People', icon: Users, minimum: 'viewer' },
   { section: 'certifications', label: 'Certifications', icon: Award, minimum: 'viewer' },
   { section: 'bookings', label: 'Bookings', icon: CalendarDays, minimum: 'viewer' },
+  { section: 'training-requests', label: 'Training requests', icon: CalendarDays, minimum: 'admin' },
   { section: 'training', label: 'Training', icon: ClipboardCheck, minimum: 'trainer' },
   { section: 'schedule', label: 'Hours & closures', icon: Clock3, minimum: 'viewer' },
   { section: 'staff', label: 'Staff access', icon: UserCog, minimum: 'owner' },
@@ -51,6 +52,7 @@ export function AdminApp({ session, section, onSignedOut }: { session: StaffSess
       {active === 'certifications' && <CertificationsPanel {...props} />}
       {active === 'bookings' && <BookingsPanel {...props} />}
       {active === 'training' && <TrainingPanel {...props} />}
+      {active === 'training-requests' && <TrainingRequestsPanel {...props} />}
       {active === 'schedule' && <SchedulePanel {...props} />}
       {active === 'staff' && <StaffPanel {...props} />}
       {active === 'audit' && <AuditPanel session={session} />}

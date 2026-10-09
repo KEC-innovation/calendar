@@ -19,7 +19,7 @@ Deno.serve(request=>handle(request,async()=>{
  if(action==='account.status') return json(request,{passwordChangeRequired:security?.password_change_required===true,email:user.email});
  if(action==='account.overview') {
   const [person,staff]=await Promise.all([
-   admin.from('people').select('id,full_name,phone').eq('email_normalized',user.email!.trim().toLowerCase()).maybeSingle(),
+   admin.from('people').select('id,full_name,phone,category,organization').eq('email_normalized',user.email!.trim().toLowerCase()).maybeSingle(),
    admin.from('staff_roles').select('role,display_name,active').eq('user_id',user.id).maybeSingle()]);
   const record=checked(person);if(record)checked(await admin.rpc('link_person_account',{p_user:user.id}));
   return json(request,{email:user.email,person:record,staff:checked(staff),profile:user.user_metadata?.registration_profile||null});
@@ -28,10 +28,14 @@ Deno.serve(request=>handle(request,async()=>{
   const pid=checked(await admin.rpc('link_person_account',{p_user:user.id}));
   const [types,requests]=await Promise.all([
    admin.from('certification_types').select('id,display_name').eq('active',true).order('display_name'),
-   admin.from('training_requests').select('id,status,contact_phone,availability,student_note,scheduled_at,staff_note,created_at,certification_types(display_name)').eq('person_id',pid).eq('user_id',user.id).order('created_at',{ascending:false}).limit(50)]);
+   admin.from('training_requests').select('id,status,contact_phone,availability,student_note,scheduled_at,scheduled_end_at,preferred_date,preferred_start,preferred_end,assigned_trainer_id,staff_note,created_at,assigned_trainer:staff_roles!training_requests_assigned_trainer_id_fkey(display_name),certification_types(display_name)').eq('person_id',pid).eq('user_id',user.id).order('created_at',{ascending:false}).limit(50)]);
   return json(request,{types:checked(types),requests:checked(requests)});
  }
- if(action==='account.request-training')return json(request,{id:checked(await admin.rpc('request_account_training',{p_user:user.id,p_type:requireUuid(body.certificationTypeId,'Equipment training'),p_phone:requiredText(body.phone,'Contact number',40),p_availability:requiredText(body.availability,'Preferred availability',1000),p_note:text(body.note,1000)}))},201);
+ if(action==='account.request-training') {
+  const date=requiredText(body.preferredDate,'Preferred date',10),start=requiredText(body.preferredStart,'Preferred start',5),end=requiredText(body.preferredEnd,'Preferred end',5);
+  if(!/^\d{4}-\d{2}-\d{2}$/.test(date)||!/^([01]\d|2[0-3]):[0-5]\d$/.test(start)||!/^([01]\d|2[0-3]):[0-5]\d$/.test(end)||end<=start)throw new HttpError(400,'Choose a date and an end time after the start.','VALIDATION_ERROR');
+  return json(request,{id:checked(await admin.rpc('request_training_with_preference',{p_user:user.id,p_type:requireUuid(body.certificationTypeId,'Equipment training'),p_phone:requiredText(body.phone,'Contact number',40),p_date:date,p_start:start,p_end:end,p_availability:text(body.availability,900),p_note:text(body.note,1000)}))},201);
+ }
  if(action==='account.cancel-training') {checked(await admin.rpc('cancel_account_training_request',{p_user:user.id,p_request:requireUuid(body.requestId,'Request')}));return json(request,{ok:true});}
  if(action==='account.complete-profile') {
   const profile=body.profile as Record<string,unknown>;
@@ -69,6 +73,25 @@ Deno.serve(request=>handle(request,async()=>{
  }
  const staff=await requireStaff(request, 'viewer', user);
  const allow=(cap:string)=>{if(!staffCan(staff,cap)) throw new HttpError(403,`Your staff account needs ${cap} permission.`,'PERMISSION_REQUIRED');};
+ async function trainingOptions(includeTrainers=false,includeQuizzes=true) {
+  const [typesResult,quizzesResult,staffResult]=await Promise.all([
+   admin.from('certification_types').select('id,display_name').eq('active',true).order('display_name'),
+   includeQuizzes?admin.from('quizzes').select('id,display_name,active,duration_minutes,pass_mark,question_count,quiz_certification_mappings(certification_type_id)').eq('active',true).order('display_name'):Promise.resolve({data:[],error:null}),
+   includeTrainers?admin.from('staff_roles').select('user_id,display_name,role,capabilities,training_certification_type_ids').eq('active',true).order('display_name'):Promise.resolve({data:[],error:null})]);
+  const types=checked(typesResult).filter((type:any)=>staffCanTrain(staff,type.id));
+  const quizzes=checked(quizzesResult).map((quiz:any)=>({...quiz,quiz_certification_mappings:quiz.quiz_certification_mappings.filter((mapping:any)=>staffCanTrain(staff,mapping.certification_type_id))})).filter((quiz:any)=>quiz.quiz_certification_mappings.length);
+  const trainers=checked(staffResult).map((row:any)=>({userId:row.user_id,displayName:row.display_name,trainingTypeIds:types.filter((type:any)=>staffCanTrain({role:row.role,capabilities:row.capabilities,trainingCertificationTypeIds:row.training_certification_type_ids},type.id)).map((type:any)=>type.id)})).filter((row:any)=>row.trainingTypeIds.length);
+  return {types,quizzes,trainers};
+ }
+ if(action==='training.qr-options'){allow('training');return json(request,await trainingOptions());}
+ if(action==='training.requests') {
+  allow('training');const page=Number(body.page??1);
+  if(!Number.isInteger(page)||page<1||page>10000)throw new HttpError(400,'Choose a valid page.','VALIDATION_ERROR');
+  const [queue,options]=await Promise.all([
+   admin.rpc('list_training_request_queue',{p_actor:staff.userId,p_search:text(body.search,100),p_audience:text(body.audience,20)||'all',p_status:text(body.status,20)||'open',p_type:body.typeId?requireUuid(body.typeId,'Training type'):null,p_page:page}),
+   trainingOptions(['owner','admin'].includes(staff.role),false)]);
+  return json(request,{...checked(queue),...options});
+ }
  if(action==='workspace') {
   const caps:string[]=capabilityNames.filter(cap=>staffCan(staff,cap));
   const data:any={capabilities:caps,people:[],types:[],quizzes:[],sessions:[],manual:[],plans:[],subscriptions:[],materials:[],requests:[]};
@@ -86,15 +109,11 @@ Deno.serve(request=>handle(request,async()=>{
   }
   if(includes('training')) {
    add('quizzes',admin.from('quizzes').select('id,display_name,active,duration_minutes,pass_mark,question_count,quiz_certification_mappings(certification_type_id)').eq('active',true),value=>value.map((quiz:any)=>({...quiz,quiz_certification_mappings:quiz.quiz_certification_mappings.filter((mapping:any)=>staffCanTrain(staff,mapping.certification_type_id))})).filter((quiz:any)=>quiz.quiz_certification_mappings.length));
-   let sessionsQuery=admin.from('training_sessions').select('id,expires_at,revoked_at,capacity,trainer_name,quiz_id,certification_type_id,quiz_attempts(id,status,passed)').order('created_at',{ascending:false}).limit(30);
+   let sessionsQuery=admin.from('training_sessions').select('id,display_name,expires_at,revoked_at,capacity,trainer_name,quiz_id,certification_type_id,quiz_attempts(id,status,passed)').order('created_at',{ascending:false}).limit(30);
    let manualQuery=admin.from('manual_training_records').select('id,trained_on,trainer_name,outcome,evidence,people(full_name),certification_types(display_name)').order('created_at',{ascending:false}).limit(30);
    if(!['owner','admin'].includes(staff.role)){sessionsQuery=sessionsQuery.eq('trainer_user_id',staff.userId);manualQuery=manualQuery.eq('recorded_by',staff.userId);}
    add('sessions',sessionsQuery);add('manual',manualQuery);
-   if(['owner','admin'].includes(staff.role)||staff.trainingCertificationTypeIds===null||staff.trainingCertificationTypeIds?.length){
-    let requests=admin.from('training_requests').select('id,status,contact_phone,availability,student_note,scheduled_at,staff_note,created_at,people(full_name,email),certification_types(display_name)').in('status',['pending','scheduled']).order('created_at').limit(100);
-    if(!['owner','admin'].includes(staff.role)&&staff.trainingCertificationTypeIds!==null)requests=requests.in('certification_type_id',staff.trainingCertificationTypeIds);
-    add('requests',requests);
-   }
+   add('requests',admin.rpc('list_training_request_queue',{p_actor:staff.userId,p_search:'',p_audience:'all',p_status:'open',p_type:null,p_page:1}),value=>value.rows);
   }
   if(includes('subscriptions')) {
    add('plans',admin.from('subscription_plans').select('*').eq('active',true).order('name'));
@@ -105,7 +124,7 @@ Deno.serve(request=>handle(request,async()=>{
   return json(request,data);
  }
  if(action==='training.request-update') {
-  allow('training');checked(await admin.rpc('update_training_request',{p_actor:staff.userId,p_request:requireUuid(body.requestId,'Request'),p_status:requiredText(body.status,'Request state',20),p_scheduled:text(body.scheduledAt,50)||null,p_note:requiredText(body.note,'Session instructions / staff note',1000)}));return json(request,{ok:true});
+  allow('training');checked(await admin.rpc('update_training_appointment',{p_actor:staff.userId,p_request:requireUuid(body.requestId,'Request'),p_status:requiredText(body.status,'Request state',20),p_start:text(body.scheduledAt,50)||null,p_end:text(body.scheduledEndAt,50)||null,p_trainer:body.trainerId?requireUuid(body.trainerId,'Assigned trainer'):null,p_note:requiredText(body.note,'Session instructions / staff note',1000),p_contact_confirmed:body.contactConfirmed===true}));return json(request,{ok:true});
  }
  if(action==='training.open') {
   allow('training');
@@ -115,10 +134,10 @@ Deno.serve(request=>handle(request,async()=>{
   checked(await admin.from('quiz_certification_mappings').select('quiz_id').eq('quiz_id',quizId).eq('certification_type_id',typeId).single());
   const minutes=Number(body.minutes),capacity=Number(body.capacity);
   if(!Number.isInteger(minutes)||minutes<1||minutes>120||!Number.isInteger(capacity)||capacity<1||capacity>200) throw new HttpError(400,'Choose 1–120 minutes and 1–200 participants.','VALIDATION_ERROR');
-  const url=appUrl();const token=randomToken(32);const expires=new Date(Date.now()+minutes*60000).toISOString();
-  const record=checked(await admin.from('training_sessions').insert({token_hash:await sha256(token),quiz_id:quizId,quiz_version:q.version,certification_type_id:typeId,trainer_user_id:staff.userId,trainer_name:staff.displayName,expires_at:expires,capacity}).select('id').single());
-  await writeAudit(admin,staff,'training_qr_opened','training_sessions',record.id,{expires_at:expires,capacity,quiz_id:quizId,certification_type_id:typeId});
-  return json(request,{id:record.id,url:`${url}#/training/${token}`,expiresAt:expires});
+  const displayName=text(body.sessionName,120);const url=appUrl();const token=randomToken(32);const expires=new Date(Date.now()+minutes*60000).toISOString();
+  const record=checked(await admin.from('training_sessions').insert({display_name:displayName,token_hash:await sha256(token),quiz_id:quizId,quiz_version:q.version,certification_type_id:typeId,trainer_user_id:staff.userId,trainer_name:staff.displayName,expires_at:expires,capacity}).select('id').single());
+  await writeAudit(admin,staff,'training_qr_opened','training_sessions',record.id,{expires_at:expires,capacity,display_name:displayName,quiz_id:quizId,certification_type_id:typeId});
+  return json(request,{id:record.id,displayName,url:`${url}#/training/${token}`,expiresAt:expires});
  }
  if(action==='training.close') {
   allow('training');const id=requireUuid(body.sessionId,'Session');

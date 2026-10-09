@@ -7,3 +7,4 @@ export { TrainingPanel } from './sections/TrainingPanel';
 export { SchedulePanel } from './sections/SchedulePanel';
 export { StaffPanel } from './sections/StaffPanel';
 export { AuditPanel } from './sections/AuditPanel';
+export { TrainingRequestsPanel } from './sections/TrainingRequestsPanel';

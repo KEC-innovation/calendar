@@ -465,3 +465,16 @@ html,body,#root { min-width:0; }
 @media(max-width:600px) { .auth-shell,.home-shell { padding:20px 16px 40px; }.auth-card { padding:24px 20px; }.home-welcome { padding:36px 0 24px; }.auth-card .form-grid { grid-template-columns:1fr; }.auth-shell>header { margin-bottom:22px; }.home-links { gap:16px; } }
 
 .profile-fields .field--wide { grid-column:1/-1; }
+
+/* Training requests stay readable in compact staff windows. */
+.training-filter-grid{display:grid;grid-template-columns:minmax(0,2fr) repeat(2,minmax(0,1fr));gap:1rem;margin-block:1rem;}
+.training-filter-grid .field{min-width:0;}
+.training-request-card{overflow-wrap:anywhere;}
+.training-request-card .panel-heading{align-items:flex-start;flex-wrap:wrap;gap:.5rem;}
+.training-request-card details>summary{cursor:pointer; padding-block:.65rem;font-weight:600;}
+.training-request-card .portal-form{margin-top:1rem;}
+.qr-card img{max-width:100%;height:auto;}
+@media(max-width:760px){.training-filter-grid{grid-template-columns:minmax(0,1fr);}}
+.admin-page-header:has(.admin-page-action .portal-actions){flex-wrap:wrap;}
+.admin-page-header:has(.admin-page-action .portal-actions)>.admin-page-action{flex-basis:100%;padding-top:0;}
+.admin-page-action .portal-actions{margin:0;}

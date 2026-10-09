@@ -238,15 +238,16 @@ Deno.serve((request) => handle(request, async () => {
   }
 
   if (action === 'quizzes.list') {
+    const attemptPage=Number(body.page??1);if(!Number.isInteger(attemptPage)||attemptPage<1||attemptPage>10000)throw new HttpError(400,'Choose a valid attempt page.','VALIDATION_ERROR');
     const [{ data: quizzes, error }, { data: attempts, error: attemptsError }, { data: certificationTypes, error: typesError }] = await Promise.all([
       admin.from('quizzes').select('id,slug,display_name,duration_minutes,question_count,pass_mark,active,version,notes,updated_at,quiz_certification_mappings(certification_type_id,certification_types(display_name))').order('display_name'),
-      admin.from('quiz_attempts').select('id,attempt_reference,status,started_at,submitted_at,score,max_score,passed,trainer_name_snapshot,people(full_name,email),quizzes(display_name)').order('started_at', { ascending: false }).limit(50),
+      admin.rpc('search_training_attempts',{p_actor:staff.userId,p_search:text(body.search,100),p_result:text(body.result,20)||'all',p_page:attemptPage}),
       admin.from('certification_types').select('id,display_name').eq('active', true).order('display_name'),
     ]);
     if (error) throw error;
     if (attemptsError) throw attemptsError;
     if (typesError) throw typesError;
-    return json(request, { quizzes: quizzes || [], attempts: attempts || [], certificationTypes: certificationTypes || [] });
+    return json(request, { quizzes: quizzes || [], attempts: attempts?.rows || [], total:attempts?.total||0, pageSize:50, certificationTypes: certificationTypes || [] });
   }
 
   if (action === 'quizzes.review-note') {
